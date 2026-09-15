@@ -1,27 +1,28 @@
 #include "ui/mainwindow.h"
 
-#include "common/logger.h"
-#include "common/version.h"
+#include "common/version.h"     // SEMIEQ_APP_NAME / SEMIEQ_VERSION_STR / SEMIEQ_BUILD_TIME
 
-#include <QAction>
-#include <QApplication>
-#include <QLabel>
-#include <QMenu>
-#include <QMenuBar>
-#include <QMessageBox>
-#include <QStatusBar>
-#include <QVBoxLayout>
-#include <QWidget>
+// =============================================================================
+//  ⚠️ 填空式骨架 —— 实现体由你补全（D6 任务，正好与 Qt 第二章「界面编写」同步）
+//
+//  为什么这块留给你写：
+//    你接下来要学的 P17 讲的就是 QMainWindow 的菜单栏/工具栏/状态栏/中心部件 ——
+//    这份文件就是那些知识点的直接应用。学完 P17 再回来填，是最省力的顺序。
+//
+//  对答案：git diff ref/skeleton -- src/ui/mainwindow.cpp
+//  任务卡：docs/tasks/D6_主窗口界面.md（学到 P17 时我再给你）
+//
+//  已给你写好的部分：构造函数（它规定了这个窗口由哪几块拼成）+ 析构函数
+// =============================================================================
 
 namespace semieq {
 
-namespace {
-const char *kModule = "MainWindow";
-}
+// ------------------------------------------------------- 已实现（不用改） ---
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
+    // 窗口 = 菜单栏 + 中心区域 + 状态栏，三块各自一个 setup 函数
     setupMenuBar();
     setupCentralArea();
     setupStatusBar();
@@ -29,111 +30,69 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle(QStringLiteral("%1 v%2 —— 半导体设备数据采集与监控")
                        .arg(QStringLiteral(SEMIEQ_APP_NAME), QStringLiteral(SEMIEQ_VERSION_STR)));
     resize(1280, 800);
-
-    LOG_INFO(kModule, QStringLiteral("主窗口已创建"));
 }
 
 MainWindow::~MainWindow() = default;
 
+// =================================================== 待你实现（D6 任务） ===
+
 void MainWindow::setupMenuBar()
 {
-    // ---- 文件 ----
-    QMenu *fileMenu = menuBar()->addMenu(QStringLiteral("文件(&F)"));
-
-    QAction *connectAction = fileMenu->addAction(QStringLiteral("连接设备(&C)"));
-    connectAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+K")));
-    connectAction->setStatusTip(QStringLiteral("连接 Modbus-TCP 设备（D2 实现）"));
-    connect(connectAction, &QAction::triggered, this, &MainWindow::showNotImplemented);
-
-    QAction *exportAction = fileMenu->addAction(QStringLiteral("导出数据(&E)"));
-    exportAction->setStatusTip(QStringLiteral("导出采集数据为 CSV（D11 实现）"));
-    connect(exportAction, &QAction::triggered, this, &MainWindow::showNotImplemented);
-
-    fileMenu->addSeparator();
-
-    QAction *quitAction = fileMenu->addAction(QStringLiteral("退出(&Q)"));
-    quitAction->setShortcut(QKeySequence::Quit);
-    connect(quitAction, &QAction::triggered, this, &QWidget::close);
-
-    // ---- 视图 ----
-    QMenu *viewMenu = menuBar()->addMenu(QStringLiteral("视图(&V)"));
-    const QStringList viewItems{
-        QStringLiteral("实时监控"),
-        QStringLiteral("数据查询"),
-        QStringLiteral("报警列表"),
-        QStringLiteral("SPC 分析"),
-        QStringLiteral("Wafer Map"),
-    };
-    for (const QString &item : viewItems) {
-        QAction *action = viewMenu->addAction(item);
-        action->setStatusTip(QStringLiteral("%1（排期 D6 之后实现）").arg(item));
-        connect(action, &QAction::triggered, this, &MainWindow::showNotImplemented);
-    }
-
-    // ---- 帮助 ----
-    QMenu *helpMenu = menuBar()->addMenu(QStringLiteral("帮助(&H)"));
-
-    QAction *aboutAction = helpMenu->addAction(QStringLiteral("关于 %1").arg(QStringLiteral(SEMIEQ_APP_NAME)));
-    connect(aboutAction, &QAction::triggered, this, &MainWindow::showAbout);
-
-    helpMenu->addAction(QStringLiteral("关于 Qt"))->setObjectName(QStringLiteral("aboutQt"));
-    connect(helpMenu->actions().last(), &QAction::triggered, qApp, &QApplication::aboutQt);
+    // TODO(D6-1) 建菜单栏。三个主菜单：
+    //
+    //   「文件」：连接设备(Ctrl+K) / 导出数据 / 分隔线 / 退出(Ctrl+Q)
+    //   「视图」：实时监控 / 数据查询 / 报警列表 / SPC 分析 / Wafer Map
+    //   「帮助」：关于 SemiEqMonitor / 关于 Qt
+    //
+    //  用到的类（P17 会讲）：QMenuBar / QMenu / QAction / QKeySequence
+    //  ⚠️ 两个细节：
+    //    · 菜单标题写 "文件(&F)" 里的 & 是【助记符】，Alt+F 能打开它
+    //    · 「关于 Qt」那一项直接连到 QApplication::aboutQt，
+    //      这行代码本身就是展示"我知道 Qt 自带什么"
+    //
+    //  暂时没实现的功能（导出/视图那几项）先连到 showNotImplemented()，
+    //  它会弹一条状态栏提示 —— 别让菜单点了没反应。
 }
 
 void MainWindow::setupCentralArea()
 {
-    QWidget *central = new QWidget(this);
-    QVBoxLayout *layout = new QVBoxLayout(central);
-
-    m_placeholder = new QLabel(central);
-    m_placeholder->setAlignment(Qt::AlignCenter);
-    m_placeholder->setWordWrap(true);
-    m_placeholder->setText(
-        QStringLiteral("骨架已就绪（v%1）\n\n"
-                       "下一步（D2-D8）：\n"
-                       "  · 设备模拟器 + Modbus-TCP 采集\n"
-                       "  · QThread 多线程采集与生产者-消费者队列\n"
-                       "  · 实时曲线（自绘 QPainter）与数据表格（QAbstractTableModel）")
-            .arg(QStringLiteral(SEMIEQ_VERSION_STR)));
-    m_placeholder->setObjectName(QStringLiteral("placeholder"));
-
-    layout->addWidget(m_placeholder);
-    setCentralWidget(central);
+    // TODO(D6-2) 建中心区域。
+    //   ① new 一个 QWidget 作为 central，setCentralWidget() 挂上去
+    //   ② 给它加一个布局（QVBoxLayout）
+    //   ③ 先放一个 QLabel 占位（成员 m_placeholder），内容写清"下一步要做什么"
+    //      —— 这就是所谓的"可运行的骨架"，任何时候程序都能跑起来
+    //
+    //  💡 提示：布局要 new 在 central 上（parent 传 central），
+    //     这样 central 析构时布局自动回收。
 }
 
 void MainWindow::setupStatusBar()
 {
-    m_connStatus = new QLabel(QStringLiteral("未连接"), this);
-    statusBar()->addWidget(m_connStatus);
-
-    m_versionLabel = new QLabel(QStringLiteral("v%1").arg(QStringLiteral(SEMIEQ_VERSION_STR)), this);
-    statusBar()->addPermanentWidget(m_versionLabel);
+    // TODO(D6-3) 建状态栏。
+    //   · 左侧（addWidget）：连接状态 m_connStatus，初始显示"未连接"
+    //   · 右侧（addPermanentWidget）：版本号 m_versionLabel
+    //
+    //  ⚠️ addWidget 和 addPermanentWidget 的区别：后者不会被临时消息顶掉。
+    //     所以"版本号"这种常驻信息要用 permanent —— 面试可能会问。
 }
 
 void MainWindow::showAbout()
 {
-    QMessageBox::about(
-        this,
-        QStringLiteral("关于 %1").arg(QStringLiteral(SEMIEQ_APP_NAME)),
-        QStringLiteral("<h3>%1 v%2</h3>"
-                       "<p>%3</p>"
-                       "<p><b>技术栈</b>：C++11 / Qt 5 / SQLite / Modbus</p>"
-                       "<p><b>构建时间</b>：%4</p>"
-                       "<p>Qt 版本：%5</p>")
-            .arg(QStringLiteral(SEMIEQ_APP_NAME),
-                 QStringLiteral(SEMIEQ_VERSION_STR),
-                 QStringLiteral(SEMIEQ_APP_DESC),
-                 QStringLiteral(SEMIEQ_BUILD_TIME),
-                 QStringLiteral(QT_VERSION_STR)));
+    // TODO(D6-4) 弹出「关于」对话框（QMessageBox::about）。
+    //   内容至少包含：应用名、版本号、一句话描述、
+    //   技术栈（C++11 / Qt 5 / SQLite / Modbus）、构建时间、Qt 版本。
+    //
+    //  版本号宏 SEMIEQ_APP_NAME / SEMIEQ_VERSION_STR / SEMIEQ_BUILD_TIME
+    //  来自 src/common/version.h（由 CMake 自动生成）—— 别硬编码版本号。
 }
 
 void MainWindow::showNotImplemented()
 {
-    QAction *action = qobject_cast<QAction *>(sender());
-    const QString name = action != nullptr ? action->text() : QStringLiteral("该功能");
-
-    LOG_INFO(kModule, QStringLiteral("点击了待实现功能：%1").arg(name));
-    statusBar()->showMessage(QStringLiteral("「%1」计划在后续迭代实现").arg(name), 3000);
+    // TODO(D6-5) 状态栏提示"某功能待实现"。
+    //   ① 用 qobject_cast<QAction*>(sender()) 拿到是哪个 action 被点了
+    //      —— sender() 是 QObject 提供的"谁给我发的信号"（P12 的延伸）
+    //   ② 状态栏 showMessage("「XXX」计划在后续迭代实现", 3000)
+    //      —— 第二个参数是自动清除的毫秒数
 }
 
 } // namespace semieq
