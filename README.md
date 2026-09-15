@@ -198,11 +198,17 @@ ctest --test-dir build --output-on-failure
 
 详见 `docs/代码评审checklist.md`。要点：
 
-- **分支**：`main`（受保护）← `dev` ← `feature/*`、`fix/*`
+- **分支**：`main`（发布）← `dev`（日常开发）← `feat-*` / `fix-*`（单个功能）
+  > ⚠️ **分支名不要用斜杠**（`feat/xxx`）——本机 Git for Windows 2.54 在 Git Bash 下
+  > 会**静默失败**：命令退出码为 0，但分支根本没建出来；`git checkout -b feat/x` 更糟，
+  > 会把 `HEAD` 指向一个不存在的 ref，仓库直接进入悬空状态。
+  > 实测详情见 `BUGS.md`「环境坑」。
 - **提交**：Conventional Commits（`feat:` / `fix:` / `docs:` / `refactor:` / `test:` / `chore:`）
 - **日志**：每日更新 `DEVLOG.md`（目标 / 完成 / 问题 / 解决 / 明日计划）
 - **版本**：语义化版本，`CHANGELOG.md` 随合并更新，发布打 tag
 - **缺陷**：记录到 `BUGS.md`（现象 / 复现 / 根因 / 修复 / 回归验证）
+- **参考资料**：`ref-skeleton` 分支保存了一份完整参考实现，可用
+  `git diff ref-skeleton -- <文件>` 对答案（**写完再对**）
 
 ---
 

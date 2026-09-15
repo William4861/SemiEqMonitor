@@ -9,6 +9,47 @@
 | BUG-0001 | 2026-09-15 | 阻塞 | 已修复 | `moc.exe` 无法处理含中文的项目路径，导致构建失败 |
 | BUG-0002 | 2026-09-15 | 阻塞 | 已修复 | `configure_file` 生成头文件目录层级错误，`#include "common/version.h"` 找不到 |
 | BUG-0003 | 2026-09-15 | 高 | 已修复 | 设备模拟器三目运算符优先级写错，温度始终为故障值 |
+| BUG-0004 | 2026-09-15 | 阻塞 | 已验证规避 | **分支名带斜杠时 Git 静默失败**，`checkout -b` 还会把 HEAD 弄成悬空 |
+
+---
+
+## 环境坑（非本项目代码缺陷，但会拦住你）
+
+### BUG-0004 · 分支名含 `/` 时 Git 静默失败
+
+- **现象**：`git branch ref/skeleton` 与 `git checkout -b feat/x` **退出码均为 0、无任何输出**，
+  但 `git branch -a` 里根本没有这个分支。
+- **最危险的一幕**：`git checkout -b feat/x 684a10b` 打印了
+  `Switched to a new branch 'feat/x'`，然后把 `HEAD` 写成了 `ref: refs/heads/feat/x`
+  —— 而那个 ref 从未被创建。结果是：
+  ```
+  $ git status        → fatal: ambiguous argument 'HEAD': unknown revision
+  $ git rev-parse HEAD → HEAD （解析不出来）
+  ```
+  仓库进入**悬空 HEAD** 状态，且索引被那次 checkout 污染（两个源文件被回退到旧版本，
+  `git status` 却显示为已暂存修改）。
+- **复现**（本机 Git for Windows 2.54.0 + Git Bash）：
+  ```bash
+  git branch tb_plain   684a10b   # ✅ 建出来了
+  git branch tb_slash/x 684a10b   # ❌ 建不出来（rc=0 但不存在）
+  git update-ref refs/heads/feat/one 684a10b   # ❌ 同样静默失败
+  ```
+- **排查过程**：一度怀疑是权限或文件系统不支持嵌套目录，于是手工验证
+  `mkdir -p .git/refs/heads/zz && echo <sha> > .git/refs/heads/zz/one`
+  —— **文件系统完全支持，`git branch -a` 也能识别 `zz/one`**。
+  所以问题出在 Git 自己创建 ref 的写入路径上（推测与沙箱/权限层拦截有关），
+  与磁盘无关。
+- **修复 / 规避**：
+  1. **分支名一律用扁平命名** —— `ref-skeleton` / `feat-modbus` / `fix-crc-check`，不用斜杠。
+  2. 万一又把 HEAD 弄悬空，一行修复：
+     ```bash
+     printf "ref: refs/heads/main\n" > .git/HEAD     # 把 HEAD 指回真实分支
+     git reset --hard HEAD                            # 索引被污染时一并修正
+     ```
+- **回归验证**：改用 `ref-skeleton` 后一次建立成功；
+  `git diff ref-skeleton -- src/acquisition/modbustcpclient.cpp` 输出正常 diff。
+- 📌 **教训**：**退出码为 0 ≠ 操作成功**。命令返回成功时必须再验证一次结果
+  （`git branch -a`、`ls`、文件内容），否则会带着错误状态继续往下走。
 
 ---
 
