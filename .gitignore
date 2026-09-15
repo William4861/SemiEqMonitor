@@ -1,0 +1,65 @@
+# ---------------------------------------------------------------- 构建产物
+build/
+build-*/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+.ninja_deps
+.ninja_log
+build.ninja
+
+# ---------------------------------------------------------------- 中间文件
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+
+# ---------------------------------------------------------------- Qt 生成物
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*_autogen/
+*.pro.user
+*.pro.user.*
+*.qmlc
+*.jsc
+
+# ---------------------------------------------------------------- 运行时产物
+bin/
+data/
+log/
+*.log
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+*.csv
+
+# 单元测试输出（Qt Test 的 -o 参数会产生）
+testout*.txt
+test-results*.xml
+
+# ---------------------------------------------------------------- IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.orig
+*.rej
+
+# ---------------------------------------------------------------- 系统
+Thumbs.db
+Desktop.ini
+.DS_Store

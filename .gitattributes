@@ -1,0 +1,35 @@
+# 默认：交给 Git 自动判定文本/二进制，文本统一用 LF
+* text=auto eol=lf
+
+# Windows 批处理必须是 CRLF，否则 cmd 解析可能出错
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 源码（显式声明，便于 GitHub 语言统计）
+*.c      text eol=lf
+*.cpp    text eol=lf
+*.h      text eol=lf
+*.hpp    text eol=lf
+*.in     text eol=lf
+
+# 构建与文档
+CMakeLists.txt  text eol=lf
+*.cmake         text eol=lf
+*.md            text eol=lf
+*.yml           text eol=lf
+*.json          text eol=lf
+
+# 二进制（不做行尾转换）
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.xlsx  binary
+*.sqlite binary
+*.db    binary
+
+# 合并策略：CHANGELOG 冲突时保留双方
+CHANGELOG.md merge=union
+DEVLOG.md    merge=union

@@ -1,0 +1,22 @@
+#ifndef SEMIEQ_VERSION_H
+#define SEMIEQ_VERSION_H
+
+// =============================================================================
+//  本文件由 CMake 从 version.h.in 生成，请勿手动修改。
+//  版本号唯一来源：顶层 CMakeLists.txt 的 project(SemiEqMonitor VERSION x.y.z)
+// =============================================================================
+
+#define SEMIEQ_APP_NAME      "@PROJECT_NAME@"
+#define SEMIEQ_APP_DESC      "@PROJECT_DESCRIPTION@"
+
+#define SEMIEQ_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define SEMIEQ_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define SEMIEQ_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define SEMIEQ_VERSION_STR   "@PROJECT_VERSION@"
+
+#define SEMIEQ_VERSION_ORG   "wangyuan"
+
+/// 编译时刻（调试与问题定位用）
+#define SEMIEQ_BUILD_TIME    __DATE__ " " __TIME__
+
+#endif // SEMIEQ_VERSION_H
