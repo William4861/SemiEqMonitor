@@ -5,6 +5,119 @@
 
 ---
 
+## 2026-09-22（D2）· Modbus 协议解析：三个纯函数 + 18 用例全绿
+
+### 今日目标
+- 实现 `modbustcpclient.cpp` 的三个纯函数：组读请求帧 / 算响应帧长度 / 解析读响应帧
+- 目标：`TestModbus` 从 12 红 → 全绿
+
+### 完成情况
+- ✅ **`Totals: 18 passed, 0 failed`**，编译 **0 error / 0 warning**
+- ✅ 三个函数：
+  - `buildReadHoldingRegistersRequest()` —— 12 字节请求帧，7 个字段全部按**大端**逐字节 append
+  - `expectedResponseLength(registerCount)` —— `7 + 1 + 1 + 2N`
+  - `parseReadHoldingRegistersResponse()` —— 六步顺序校验 + 数据段大端还原
+- ✅ 迭代 4 轮：编译错 8 个 → 11 passed/7 failed → 12/6 → **18/0**
+- ✅ 仓库首次推送到 GitHub（`William4861/SemiEqMonitor`），建立每日提交习惯
+
+### 遇到的问题
+
+**问题 1：写完不编译就往下走（同一个错犯了三轮）**
+
+`static_cast` 前后拼错了三次（`transationId` / `staitc_cast` / `tatic_cast`），
+另有 4 处 `return fail(QStringLiteral("...")` **少一个右括号**、
+`res` 声明在 `else` 块内却在块外 `return`。这 8 个编译错**没有一个是逻辑问题**，全是"没验证"。
+
+**怎么解决**：改完一个函数立刻编译，别攒着。
+```bash
+scripts\build.bat
+```
+**学到的**：编译器是最便宜的检查工具。攒到最后再编译，等于把 8 个错误一次性摊在面前。
+
+**问题 2：一个 `!` 让 6 个用例变红**
+
+判断异常响应时写成了
+```cpp
+else if (!(static_cast<quint8>(frame.at(7)) & 0x80))   // ❌ 多了个 !
+```
+`0x03 & 0x80 = 0` → 取反成 `true` → **正常帧被判成异常响应**；
+而 `0x83 & 0x80 = 0x80` → 取反成 `false` → **异常帧反而漏过了异常分支**。
+
+**怎么解决**：去掉 `!`，并确认**异常响应的判断排在"功能码 ≠ 0x03"之前** ——
+否则 `0x83` 会先被 `0x83 != 0x03` 截胡，异常码那个字节永远读不到。
+
+**学到的**：位掩码判断写完，用两个**极值**各代一遍（`0x03` 和 `0x83`）。
+一个 `!` 的代价是 6 条用例。
+
+**问题 3：成功路径漏了 `*ok = true`，而报错信息是空的**
+
+测试报 `'ok' returned FALSE. ()` —— **括号里是空的**。
+空 `error` 说明**根本没走失败分支**，是成功路径返回的，只是忘了把传出参数 `ok` 置 true。
+
+**怎么解决**：在 `else` 分支里补 `*ok = true;`。
+
+**学到的**：**报错信息的"缺失"本身就是线索**。`ok = false` 但 `error` 为空，
+逻辑上只有一种可能（没经过失败分支）。以后遇到"断言失败但错误信息空白"，先往这个方向想。
+
+**问题 4：两个下标空间混用导致越界**
+
+数据从 `frame.at(9)` 开始取，却拿 `9 + i` 去索引自己攒的临时数组（它只有 `0 ~ byteCount-1`）。
+
+**怎么解决**：临时数组的下标从 0 起 —— `temp.at(i - 1)` / `temp.at(i)`。
+
+**学到的**：**`frame` 的下标是"整帧坐标"，临时数组的下标是"数据段坐标"，两者不能混用**。
+写循环前先问一句"我手里这个变量是哪个坐标系里的"。
+
+**问题 5：直接跑 exe 弹「无法定位程序输入点」**
+
+编译成功，但运行 `build\bin\semieq_tests.exe` 报
+`无法定位程序输入点 ?compareStrings@QPrivate@@… 于 …\5.14.2\msvc2017_64\bin\Qt5Test.dll`。
+
+**根因**：本机装了**两套 Qt 5.14.2**（`mingw73_64` + `msvc2017_64`），
+而用户 PATH 里 **msvc 排在 mingw 前面** → exe 启动时先找到了 MSVC 版的 Qt DLL。
+**MSVC 编译的 DLL 与 MinGW 编译的 exe 二进制不兼容** —— 两者的 C++ 符号名编码方式不同
+（`?xxx@@` 是 MSVC 修饰名，`_Zxx` 是 GCC 修饰名），所以"找不到入口点"。
+
+**怎么解决**：走项目脚本（它会把 `mingw73_64\bin` 前置到 PATH）
+```bash
+scripts\build.bat && scripts\run.bat test
+```
+**学到的**：**"能编译"和"能运行"是两件事** —— 编译期和加载期的依赖解析路径不同。
+混装多套 Qt 的机器上，这个坑很容易踩到。
+
+**问题 6：`git push` 连不上 GitHub —— 代理配置与实际端口不符**
+
+`git config` 里写的是 `http://127.0.0.1:7897`，但代理软件实际监听 **7890**
+（而且值被写成了 `127.0.0.7890`，少了一个 `1:`）→ git 把它当主机名解析，
+报 `Could not resolve proxy: 127.0.0.7890`。
+
+**怎么解决**：
+```bash
+git config --global http.proxy  http://127.0.0.1:7890
+git config --global https.proxy http://127.0.0.1:7890
+git config --get http.proxy      # 回读验证
+```
+**学到的**：**改完配置必须回读验证**。`git config --get` 只要一秒，
+但少一个字符能让人查半天。"退出码 0 ≠ 操作成功"这条，对配置类操作同样成立。
+
+### 今日新增知识点
+- **MBAP 报文头里的「长度」字段**数的是**它自己后面的字节数**（单元标识 1 + PDU 5 = 6），
+  **不含 MBAP 自己那 7 字节**，也不是整帧的 12
+- **字节序 ≠ 移位**：字节序是"多字节数值的**字节之间**的位置"，移位是"一个字节**内部**的 bit 移动"。
+  `0x0031`(49) 字节序写反 → `0x3100`(=12544)；而 `0x80 → 0x08` 是移位，与字节序无关
+- **`char` 在 x86 上有符号** → 字节 ≥ `0x80` 会变负数（`0x80` → `-128`），
+  必须先 `static_cast<quint8>` 再参与运算，否则**符号扩展**会污染结果
+- `QStringLiteral` 只能包字符串字面量，不能在它内部做 `+` 拼接；拼数字用 `QString::number()`
+- **输出参数的语义**：函数有义务在**成功路径也**把 `*ok` 置 true，不能指望调用方预先初始化
+- **`git add` 多文件时，只要有一个 pathspec 不匹配就整体失败**（`fatal: pathspec`），一个都不会暂存
+
+### 明日计划（D2 第 2 步）
+- 看 `BV1XW411x7NU` **P55 / P59 / P60 / P73**（Qt TCP + 粘包，约 51 分钟）
+- 实现连接部分：`connectToDevice()` / `disconnectFromDevice()` / `onConnected` / `onDisconnected` / `onSocketError`
+- 手工联调：`scripts\run.bat sim`（模拟器）+ `scripts\run.bat monitor`（上位机）
+
+---
+
 ## 2026-09-15（D1 复盘）· 把实现体交回给自己
 
 ### 今日目标（追加）
@@ -43,6 +156,10 @@ git reset --hard HEAD                          # ② 索引被污染，一并修
 git branch ref-skeleton 684a10b                # ③ 改用扁平命名，一次成功
 ```
 并定下约定：**分支名一律扁平命名**（`feat-modbus` / `fix-crc` / `ref-skeleton`），不用斜杠。
+
+> 📌 **2026-09-22 更正：这条约定已作废。** 当天定位到——嵌套 ref 写不进去**只发生在沙箱化的执行环境**里，
+> 普通本机终端没有这个限制（同一台机器上对比验证过）。**斜杠分支名（`feat/xxx`）可以正常使用**，
+> 详见 `BUGS.md` BUG-0004 的更新。
 
 **学到的**：🔴 **退出码为 0 ≠ 操作成功。**
 凡是会改动状态的操作（建分支、改文件、装包），执行完必须**再验证一次结果**
@@ -115,7 +232,8 @@ moc: Cannot create .../C++Qt??/SemiEqMonitor/build/semieq_core_autogen/.../moc_l
 ### 明日计划（D2）
 - `IDeviceClient` 接出模拟器实现，跑通"采集 → 解析 → 日志"闭环
 - 建立第一个完整 Git 工作流样例：开 Issue → `feat-*` 分支 → PR → 自审 → 合并
-  > ⚠️ 分支名用扁平命名，不要写 `feat/xxx`（原因见 BUGS.md BUG-0004）
+  > 📌 分支名用 `feat/xxx` 斜杠命名是**可以**的（`BUG-0004` 已于 2026-09-22 更正：
+  > 那是沙箱化执行环境的限制，普通本机终端无此问题）
 - 开始 `QThread` 采集线程设计（`moveToThread` + QueuedConnection）
 
 > 📌 **本条目中的实现体已于当日复盘时拆回填空式**，见上方「D1 复盘」条目。

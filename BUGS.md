@@ -15,7 +15,7 @@
 
 ## 环境坑（非本项目代码缺陷，但会拦住你）
 
-### BUG-0004 · 分支名含 `/` 时 Git 静默失败
+### BUG-0004 · 分支名含 `/` 时 Git 静默失败（**2026-09-22 已定位：仅发生在沙箱化执行环境**）
 
 - **现象**：`git branch ref/skeleton` 与 `git checkout -b feat/x` **退出码均为 0、无任何输出**，
   但 `git branch -a` 里根本没有这个分支。
@@ -37,19 +37,31 @@
 - **排查过程**：一度怀疑是权限或文件系统不支持嵌套目录，于是手工验证
   `mkdir -p .git/refs/heads/zz && echo <sha> > .git/refs/heads/zz/one`
   —— **文件系统完全支持，`git branch -a` 也能识别 `zz/one`**。
-  所以问题出在 Git 自己创建 ref 的写入路径上（推测与沙箱/权限层拦截有关），
-  与磁盘无关。
+  所以问题出在 Git 自己创建 ref 的写入路径上。
+- ✅ **2026-09-22 定位结论**：根因**不是本机、也不是 Git 本身**，而是**沙箱化的执行环境会
+  静默丢弃 `.git/refs/` 下 ≥4 层深路径的写入**。同一台机器上的对比判据：
+  - 普通终端：`mkdir -p .git/refs/remotes/origin` → 目录**持久存在**，`Test-Path` 为 True
+  - 沙箱环境：`mkdir -p` 与 `git update-ref refs/remotes/origin/main <sha>` **退出码全为 0**，
+    但目录 / 文件**根本不存在**；`Test-Path` 当场为 True，**下一次执行即消失**
+  - 同源现象：`git fetch` 打印 `* [new branch] main -> origin/main`，却永远建不出 `origin/main`
+  → **普通本机终端没有这个限制，斜杠分支名（`feat/xxx`）可以正常使用。**
 - **修复 / 规避**：
-  1. **分支名一律用扁平命名** —— `ref-skeleton` / `feat-modbus` / `fix-crc-check`，不用斜杠。
-  2. 万一又把 HEAD 弄悬空，一行修复：
+  1. **回读验证**：任何"建分支 / 建 ref / fetch"之后，用 `git branch -a` / `git show-ref`
+     确认结果**真的存在**（沙箱环境里会"假成功"）。
+  2. **需要写 `refs/remotes/**` 的命令（`git fetch` / `git push -u`）在普通终端执行**；
+     沙箱环境只用来读 —— 看远端用 `git ls-remote`，取文件用 `FETCH_HEAD`。
+  3. 万一又把 HEAD 弄悬空，一行修复：
      ```bash
      printf "ref: refs/heads/main\n" > .git/HEAD     # 把 HEAD 指回真实分支
      git reset --hard HEAD                            # 索引被污染时一并修正
      ```
-- **回归验证**：改用 `ref-skeleton` 后一次建立成功；
-  `git diff ref-skeleton -- src/acquisition/modbustcpclient.cpp` 输出正常 diff。
-- 📌 **教训**：**退出码为 0 ≠ 操作成功**。命令返回成功时必须再验证一次结果
-  （`git branch -a`、`ls`、文件内容），否则会带着错误状态继续往下走。
+- **回归验证**：2026-09-22 在普通终端执行 `git push -u origin main`，成功创建了
+  `refs/remotes/origin/main`（同样是 4 层嵌套）→ 反证"本机不支持嵌套 ref"的结论不成立。
+- 📌 **教训（两条）**：
+  1. **退出码为 0 ≠ 操作成功** —— 命令返回成功时必须再验证一次结果
+     （`git branch -a`、`ls`、读回内容），否则会带着错误状态继续往下走。
+  2. **结论必须标注它的前提环境** —— 这次的误判，就是把"沙箱环境的限制"当成了
+     "本机 / Git 的限制"，差点让项目长期放弃斜杠分支名这种完全正常的写法。
 
 ---
 
