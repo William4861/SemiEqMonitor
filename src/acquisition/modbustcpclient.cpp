@@ -76,11 +76,21 @@ QByteArray ModbusTcpClient::buildReadHoldingRegistersRequest(int transactionId,
     //  提示：QByteArray 用 append(char) 追加；返回值长度应为 12。
     //  验收：buildRequest_totalLengthIs12 / buildRequest_fieldsAreBigEndian /
     //        buildRequest_encodesAddressAndCount
-    Q_UNUSED(transactionId)
-    Q_UNUSED(slaveId)
-    Q_UNUSED(startAddress)
-    Q_UNUSED(registerCount)
-    return QByteArray();
+   QByteArray res;
+   res.append(static_cast<char>((transactionId>>8)&0xff));
+   res.append(static_cast<char>(transactionId&0xff));
+   res.append(static_cast<char>(0x00));
+   res.append(static_cast<char>(0x00));
+   res.append(static_cast<char>(0x00));
+   res.append(static_cast<char>(0x06));
+   res.append(static_cast<char>(slaveId&0xff));
+   res.append(char(0x03));
+   res.append(static_cast<char>((startAddress>>8)&0xff));
+   res.append(static_cast<char>(startAddress&0xff));
+   res.append(static_cast<char>((registerCount>>8)&0xff));
+   res.append(static_cast<char>(registerCount&0xff));
+
+    return res;
 }
 
 int ModbusTcpClient::expectedResponseLength(int registerCount)
@@ -91,8 +101,8 @@ int ModbusTcpClient::expectedResponseLength(int registerCount)
     //  拆解：MBAP 头 7 字节 + 功能码 1 + 字节数 1 + 数据(每个寄存器 2 字节)
     //
     //  验收：expectedResponseLength_matchesParsedFrame
-    Q_UNUSED(registerCount)
-    return 0;
+    int res = 7+1+1+registerCount*2;
+    return res;
 }
 
 QVector<quint16> ModbusTcpClient::parseReadHoldingRegistersResponse(const QByteArray &frame,
@@ -108,18 +118,71 @@ QVector<quint16> ModbusTcpClient::parseReadHoldingRegistersResponse(const QByteA
     //   ④ 第 9 字节 = 字节数，必须满足：是偶数，且剩余字节数 >= 它
     //   ⑤ 把数据段两字节一组、按【大端】还原成 quint16
     //
-    //  怎么写"失败"：函数开头有一段 fail lambda（我给你留着了，见下方注释），
-    //  直接 `return fail(QStringLiteral("原因"))` 即可，它会帮你置 ok/error。
+    //  怎么写"失败"：函数开头先放一个 fail lambda，然后直接
+    //  `return fail(QStringLiteral("原因"))` —— 它会帮你置 ok/error。
+    //
+    //  ⚠️ 修正：上一版注释说"我给你留着了"，实际骨架漏了（我的锅，已更正如上）。
+    //     下面这段【照抄进函数开头】，三行函数体你自己写：
+    //
+    //      auto fail = [ok, error](const QString &reason) {
+    //          // ① 若 ok 非空 → *ok = false
+    //          // ② 若 error 非空 → *error = reason
+    //          // ③ 返回一个空 QVector<quint16>()
+    //      };
+    //
+    //  错误信息要含关键词（测试会查）：功能码 / 异常 / 不完整
     //
     //  验收：parse_validResponse + 四个 parse_rejects* + 两个大数据端用例
-    Q_UNUSED(frame)
-    if (ok) {
-        *ok = false;
+    auto fail = [ok, error](const QString& reason)
+        {
+            if (ok) *ok = false;
+            if (error) *error = reason;
+            return QVector<quint16>();
+        };
+    if(frame.size()<9 )
+    {
+        return fail(QStringLiteral("帧长过短，解析失败!"));
     }
-    if (error) {
-        *error = QStringLiteral("尚未实现");
+    else if (static_cast<quint8>(frame.at(7))&static_cast<quint8>(0x80))
+    {
+        return fail(QStringLiteral("功能码最高位是1，解析异常!异常码为:")+QString::number(static_cast<quint8>(frame.at(8))));
     }
-    return QVector<quint16>();
+    else if (frame.at(7) != static_cast<char>(0x03))
+    {
+        return fail(QStringLiteral("功能码!=0x03，解析失败!"));
+    }
+    else if (static_cast<quint8>(frame.at(8)) % 2 != 0)          // ① 字节数是奇数
+    {
+        return fail(QStringLiteral("字节数必须是偶数"));
+    }
+    else if (frame.size() < 9 + static_cast<quint8>(frame.at(8))) // ② 剩余字节不够
+    {
+        return fail(QStringLiteral("数据不完整：声明 ")
+            + QString::number(static_cast<quint8>(frame.at(8)))
+            + QStringLiteral(" 字节，实际只有 ")
+            + QString::number(frame.size() - 9)
+            + QStringLiteral(" 字节"));
+    }
+    else
+    {
+        *ok = true;
+        QVector<quint16> res;
+        QVector<quint8> temp;
+        for (quint8 i = 0; i < static_cast<quint8>(frame.at(8)); i++)
+        {
+            temp.append(static_cast<quint8>(frame.at(9+i)));
+            if (i % 2 != 0)
+            {
+                res.append(static_cast<quint16>((temp.at(i - 1) << 8) | temp.at(i)));
+            }
+            
+        }
+        return res;
+    }
+    
+
+
+    
 }
 
 // ================================================== D2 任务：连接与信号 ===
