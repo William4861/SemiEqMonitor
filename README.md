@@ -207,8 +207,7 @@ ctest --test-dir build --output-on-failure
 - **日志**：每日更新 `DEVLOG.md`（目标 / 完成 / 问题 / 解决 / 明日计划）
 - **版本**：语义化版本，`CHANGELOG.md` 随合并更新，发布打 tag
 - **缺陷**：记录到 `BUGS.md`（现象 / 复现 / 根因 / 修复 / 回归验证）
-- **参考资料**：`ref-skeleton` 分支保存了一份完整参考实现，可用
-  `git diff ref-skeleton -- <文件>` 对答案（**写完再对**）
+- **测试**：协议解析与业务计算有单元测试（`tests/`），`scripts\run.bat test` 一键运行
 
 ---
 

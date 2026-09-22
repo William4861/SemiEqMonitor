@@ -63,3 +63,6 @@ test-results*.xml
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# ---------------------------------------------------------------- 个人学习材料（不入库）
+docs/tasks/
