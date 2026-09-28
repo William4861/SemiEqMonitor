@@ -10,6 +10,10 @@
 | BUG-0002 | 2026-09-15 | 阻塞 | 已修复 | `configure_file` 生成头文件目录层级错误，`#include "common/version.h"` 找不到 |
 | BUG-0003 | 2026-09-15 | 高 | 已修复 | 设备模拟器三目运算符优先级写错，温度始终为故障值 |
 | BUG-0004 | 2026-09-15 | 阻塞 | 已验证规避 | **分支名带斜杠时 Git 静默失败**，`checkout -b` 还会把 HEAD 弄成悬空 |
+| BUG-0005 | 2026-09-28 | 高 | 已修复 | `mainwindow.cpp` 少 include `<QMenuBar>`，只拿到前置声明 → `incomplete type` 编译失败 |
+| BUG-0006 | 2026-09-28 | 中 | 已修复 | 三个 `QLabel*` 成员未 `new` 就加进布局/状态栏 → Qt **静默忽略**，界面空白（不崩不报错） |
+| BUG-0007 | 2026-09-28 | 高 | 已修复 | `QKeySequence::Quit` 在 **Windows 上解析为空** → 「退出」快捷键等于没设 |
+| BUG-0008 | 2026-09-28 | 阻塞 | 已修复 | `CMakeLists.txt` 首行被误粘贴文本 → `Parse error. Expected a command name` |
 
 ---
 
@@ -110,6 +114,103 @@
                                  : 45.0 + 8.0 * qSin(t / 6.0) + noise(1.2);
   ```
 - **回归验证**：端到端联调读回温度 = 49（正常范围内波动），注入故障后再读 = 95。
+
+---
+
+## BUG-0005 · 只有前置声明 → `incomplete type`（D6）
+
+- **现象**：`mainwindow.cpp` 写完菜单栏第一行后编译失败：
+  ```
+  error: invalid use of incomplete type 'class QMenuBar'
+       QMenu *fileMenu = mBar->addMenu("文件");
+  note: forward declaration of 'class QMenuBar'
+   class QMenuBar;
+  ```
+  同时编辑器（VS Code / IntelliSense）**也不给 `mBar->` 的成员提示**，只有红色波浪线。
+- **复现**：只 `#include "ui/mainwindow.h"`（它只 include `<QMainWindow>`），然后 `mBar->addMenu(...)`。
+- **根因**：`QMainWindow` 里 `QMenuBar` 是**当指针用**的（`QMenuBar *menuBar() const;`），
+  所以 `qmainwindow.h:55` 只写了一句**前置声明** `class QMenuBar;` 就够它自己用 ——
+  但**调用方要 `->成员`，必须看到完整定义**。
+- **修复**：在 `mainwindow.cpp` 顶部补 `#include <QMenuBar>`（它同时带来 `QMenu`/`QAction`/`QKeySequence`/`QWidget`）。
+- **回归验证**：补 include 后编译通过；**编辑器的成员提示也同时恢复了**
+  —— 因为 IntelliSense 也只是"看到完整定义才能列成员"。
+- 📌 **教训**：报错出现 `incomplete type` / `forward declaration` → **先想"缺 include"**。
+  这类报错的"没有代码提示"和"编译失败"是**同一个原因**，不是编辑器的问题。
+
+---
+
+## BUG-0006 · `nullptr` 加进布局/状态栏被静默忽略（D6）
+
+- **现象**：`addWidget(nullptr)` 后界面**中央空白、状态栏什么都没有**，
+  但**编译 0 error、运行不崩、不报警告**，日志里也没有任何线索。
+- **复现步骤**（修复前）：
+  ```cpp
+  // 头文件里：QLabel *m_placeholder = nullptr;  ...
+  vLayout->addWidget(m_placeholder);        // m_placeholder 从未 new
+  sBar->addWidget(m_connStatus);            // 同上
+  sBar->addPermanentWidget(m_versionLabel); // 同上
+  ```
+- **根因**：三个成员变量**只在头文件里声明并初始化为 `nullptr`，从未创建实例**。
+  而 Qt 对"空指针"的输入是**静默忽略**（本机实测 `QLayout::addWidget(nullptr)`
+  和 `QStatusBar::addWidget(nullptr)` 都不崩、不报错、不写警告）。
+- **修复**：先 `new QLabel(...)` 再 add：
+  ```cpp
+  m_placeholder = new QLabel(QStringLiteral("下一步：…"), widget);
+  vLayout->addWidget(m_placeholder);
+  ```
+- **回归验证**：重新编译 + `run.bat monitor` → 中央出现占位文字、状态栏左「未连接」右版本号。
+- 📌 **教训**：**"不崩" ≠ "对"**。Qt 很多 API 对 `nullptr` 是"宽容"的（悄悄跳过），
+  所以 **编译和单元测试都抓不到**，只能"跑起来看界面"。写完带 UI 的代码**必须实际看一眼**。
+
+---
+
+## BUG-0007 · `QKeySequence::Quit` 在 Windows 上是空键（D6）
+
+- **现象**：给「退出」菜单项设了 `actQuit->setShortcut(QKeySequence::Quit);`，
+  编译通过、程序正常，但**按什么键都触发不了退出**（菜单项右侧也不显示快捷键）。
+- **复现**：任何平台下打印
+  ```cpp
+  qDebug() << QKeySequence(QKeySequence::Quit).toString();
+  ```
+- **根因**：`QKeySequence::StandardKey` 是**跨平台预定义**，而 `Quit` 只有 **macOS 有定义（`Cmd+Q`）**；
+  在 Windows / Linux 上**解析结果为空字符串**。
+  本机（Qt 5.14.2 / Windows）实测对照：
+  ```
+  Quit          -> （空）         ← 等于没设
+  Cancel        -> Esc            ← Esc 是这个，不是 Quit
+  Save / New / Open -> Ctrl+S / Ctrl+N / Ctrl+O
+  Close         -> Ctrl+F4
+  HelpContents  -> F1
+  ```
+- **修复**：改用**显式键位字符串**：`actQuit->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));`
+- **回归验证**：设完后按 Ctrl+Q 能关窗；菜单项右侧显示 `Ctrl+Q`。
+- 📌 **教训（两条）**：
+  1. **"编译通过" ≠ "功能有效"** —— 枚举存在所以编译期毫无提示，只有实跑才知道没生效。
+     **键位 / 路径 / 配置这类东西必须实跑验证。**
+  2. **Qt 预定义键不能凭常识猜**（"Quit 应该就是 Esc 吧" —— 错）。要用就直接打印
+     `QKeySequence(标准键).toString()` 看它在本平台解析成什么。
+
+---
+
+## BUG-0008 · `CMakeLists.txt` 被误粘贴文本导致 CMake 解析失败（D6）
+
+- **现象**：配置阶段直接失败：
+  ```
+  CMake Error at CMakeLists.txt:1: Parse error.
+  Expected a command name, got unquoted argument with text "CMake:".
+  ```
+- **复现**：查看文件首行 →
+  ```
+  CMake: Select a Kit# ================================================
+  ```
+  文件第 1 行**被插入了一段本应输入到 VS Code 命令面板的文本**，和原来的注释行黏在了一起。
+- **根因**：**编辑器有焦点时把命令文本粘进了文件**。
+  在 VS Code 里 `Ctrl+Shift+P` 打开的是**命令面板**（一个独立的输入框），
+  如果焦点还在编辑器里，`Ctrl+Shift+P` 不生效，**复制的内容会直接落到光标处**。
+- **修复**：删掉首行误植的 `CMake: Select a Kit`（保留原注释行）。
+- **回归验证**：`scripts\build.bat` 重新配置 + 编译通过。
+- 📌 **教训**：**执行命令前先确认焦点在命令面板**；
+  以及 **"文件被改坏"时先看 diff 首几行** —— 这类误操作的特征就是"多出与代码无关的自然语言文本"。
 
 ---
 

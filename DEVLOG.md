@@ -5,6 +5,94 @@
 
 ---
 
+## 2026-09-28（D6）· 主窗口界面：菜单栏 / 中央区域 / 状态栏 / 关于框
+
+### 今日目标
+- 实现 `src/ui/mainwindow.cpp` 的 5 个函数：`setupMenuBar` / `setupCentralArea` / `setupStatusBar` / `showAbout` / `showNotImplemented`
+- 目标：编译 0 error，窗口能跑出"**可运行的骨架**"
+
+### 完成情况
+- ✅ 5 个函数全部实现（文件 **106 → 171 行**），编译 **0 error / 0 warning**
+- ✅ 手工联调通过：
+  - 菜单栏三个菜单（**文件/视图/帮助**）+ 助记符（`Alt+F` / `Alt+V` / `Alt+H`）+ 分隔线
+  - 快捷键 **Ctrl+K**（连接设备）/ **Ctrl+Q**（退出，实测可关窗）
+  - 状态栏**左**「未连接」（`addWidget`）+ **右**版本号 `v0.1.0`（`addPermanentWidget`）
+  - 中央区域占位标签；「帮助 → 关于」**弹框**；「关于 Qt」调 Qt 自带；未实现项 → **状态栏临时提示**
+- ✅ 顺带为 D2 第 2 步铺好自动化验收口：新增 `tests/test_tcp_connect.cpp` + `scripts\run.bat tcptest`
+
+### 遇到的问题
+
+**问题 1：`invalid use of incomplete type 'class QMenuBar'`**
+
+`mainwindow.h` 只 include 了 `<QMainWindow>`，而 `qmainwindow.h:55` 对 `QMenuBar` 只写了一句
+`class QMenuBar;`（**前置声明**）→ 所以 `mBar->addMenu(...)` 编不过：
+
+```
+error: invalid use of incomplete type 'class QMenuBar'
+note: forward declaration of 'class QMenuBar'
+    class QMenuBar;
+```
+
+**怎么解决**：在 `mainwindow.cpp` 里补 `#include <QMenuBar>`。
+
+**学到的**：**前置声明只够"当指针用"（`QMenuBar *p;`）；一旦要 `p->成员`，就必须 include 完整定义。**
+报错里出现 `incomplete type` / `forward declaration`，第一反应就应该是"缺 include"。
+
+---
+
+**问题 2：三个成员变量没 `new` 就加进了布局 / 状态栏**
+
+`m_placeholder` / `m_connStatus` / `m_versionLabel` 在头文件里是 `= nullptr` 初始化，
+直接 `vLayout->addWidget(m_placeholder)` → **编译能过、运行也不崩**，
+但界面里**中央一片空白、状态栏什么都没有**。
+
+**怎么解决**：先 `new QLabel(...)` 再 `addWidget` / `addPermanentWidget`。
+
+**学到的**：Qt 对 `addWidget(nullptr)` 是**静默忽略**（本机实测：不崩、不报警告、不写日志）。
+→ **"不崩" ≠ "对"**。这类错**编译和单测都抓不到**，只能"跑起来看界面"发现。
+
+---
+
+**问题 3：`QKeySequence::Quit` 在 Windows 上解析为空**
+
+原以为用 Qt 预定义的 `QKeySequence::Quit` 就能给"退出"设快捷键。本机实测（Qt 5.14.2）：
+
+```
+Quit          -> （空）        ← 等于什么都没设
+Cancel        -> Esc
+Save          -> Ctrl+S
+New / Open    -> Ctrl+N / Ctrl+O
+Close         -> Ctrl+F4
+HelpContents  -> F1
+```
+
+`Quit` 是 **macOS 的 `Cmd+Q`**，Windows/Linux 上没有对应标准键 → 返回空串。
+
+**怎么解决**：写死 `QKeySequence(QStringLiteral("Ctrl+Q"))`。
+
+**学到的**：**"编译通过" ≠ "功能有效"** —— 枚举存在所以编译期毫无提示，只有跑起来才知道没生效。
+**键位 / 路径 / 配置这类东西必须实跑验证**，不能只看编译过。
+
+---
+
+**问题 4：`connect` 把 action 连错了槽**
+
+`actQuit`（退出）和 `actAboutSemi`（关于）一开始**都连到了 `showNotImplemented()`** →
+结果：点「退出」不退出、点「关于」不弹框。
+
+**怎么解决**：分别改成 `&QWidget::close`、`&MainWindow::showAbout`。
+
+**学到的**：**connect 的目标槽要逐个对一遍**。10 个 action 里连错 2 个，
+**编译期完全看不出来**（信号槽是运行期绑定）—— 只能一个一个点。
+
+### 明日计划（9/29）
+- **D2 第 2 步**：读官方示例 `fortuneclient` + 正点原子 P59 + 阿西拜 P83 →
+  写连接部分 5 个函数（`connectToDevice` / `disconnectFromDevice` / `onConnected` / `onDisconnected` / `onSocketError`）
+  → `scripts\run.bat tcptest` 三条全绿
+- 然后 **D3 采集**（`QTimer` 轮询 + `onReadyRead()` 粘包拆包）
+
+---
+
 ## 2026-09-22（D2）· Modbus 协议解析：三个纯函数 + 18 用例全绿
 
 ### 今日目标

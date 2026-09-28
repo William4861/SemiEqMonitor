@@ -2,6 +2,13 @@
 
 #include "common/version.h"     // SEMIEQ_APP_NAME / SEMIEQ_VERSION_STR / SEMIEQ_BUILD_TIME
 
+#include <QMenuBar>
+#include <QKeySequence>
+#include <QApplication>
+#include <QStatusBar>
+#include <QVBoxLayout>
+#include <QLabel>
+#include <QMessageBox>
 // =============================================================================
 //  ⚠️ 填空式骨架 —— 实现体由你补全（D6 任务，正好与 Qt 第二章「界面编写」同步）
 //
@@ -52,6 +59,52 @@ void MainWindow::setupMenuBar()
     //
     //  暂时没实现的功能（导出/视图那几项）先连到 showNotImplemented()，
     //  它会弹一条状态栏提示 —— 别让菜单点了没反应。
+
+    //创建菜单栏
+    QMenuBar *mBar = this->menuBar();
+
+    //创建菜单项
+    QMenu *fileMenu = mBar->addMenu(QStringLiteral("文件(&F)"));
+    QMenu *viewMenu = mBar->addMenu(QStringLiteral("视图(&V)"));
+    QMenu *helpMenu = mBar->addMenu(QStringLiteral("帮助(&H)"));
+    
+    //文件菜单项的Action
+    QAction *actConnet = fileMenu->addAction(QStringLiteral("连接设备(Ctrl+K)"));
+    QAction *actExport = fileMenu->addAction(QStringLiteral("导出数据"));
+    fileMenu->addSeparator();
+    QAction *actQuit = fileMenu->addAction(QStringLiteral("退出(Ctrl+Q)"));
+
+    //视图菜单项的Action
+    QAction *actMonitor = viewMenu->addAction(QStringLiteral("实时监控"));
+    QAction *actDataSearch = viewMenu->addAction(QStringLiteral("数据查询"));
+    QAction *actAlarmList = viewMenu->addAction(QStringLiteral("报警列表"));
+    QAction *actSPC = viewMenu->addAction(QStringLiteral("SPC分析"));
+    QAction *actWaferMap = viewMenu->addAction(QStringLiteral("WaferMap"));
+
+    //帮助菜单栏的Action
+    QAction *actAboutSemi = helpMenu->addAction(QStringLiteral("关于SemiEqMonitor"));
+    QAction *actAboutQt = helpMenu->addAction(QStringLiteral("关于Qt"));
+
+    //文件菜单项Action的快捷键
+    actConnet->setShortcut(QKeySequence(QStringLiteral("Ctrl+K")));
+    actQuit->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));
+
+    //文件菜单项的连接
+    connect(actConnet,&QAction::triggered,this,&MainWindow::showNotImplemented);
+    connect(actExport,&QAction::triggered,this,&MainWindow::showNotImplemented);
+    connect(actQuit,&QAction::triggered,this,&QWidget::close);
+    
+    //视图菜单项的连接
+    connect(actMonitor,&QAction::triggered,this,&MainWindow::showNotImplemented);
+    connect(actDataSearch,&QAction::triggered,this,&MainWindow::showNotImplemented);
+    connect(actAlarmList,&QAction::triggered,this,&MainWindow::showNotImplemented);
+    connect(actSPC,&QAction::triggered,this,&MainWindow::showNotImplemented);
+    connect(actWaferMap,&QAction::triggered,this,&MainWindow::showNotImplemented);
+
+    //帮助菜单项的连接
+    connect(actAboutSemi,&QAction::triggered,this,&MainWindow::showAbout);
+    connect(actAboutQt,&QAction::triggered,this,&QApplication::aboutQt);
+    
 }
 
 void MainWindow::setupCentralArea()
@@ -64,6 +117,14 @@ void MainWindow::setupCentralArea()
     //
     //  💡 提示：布局要 new 在 central 上（parent 传 central），
     //     这样 central 析构时布局自动回收。
+
+    QWidget *widget = new QWidget(this);
+    setCentralWidget(widget);
+
+    QVBoxLayout *vLayout = new QVBoxLayout(widget);
+
+    m_placeholder = new QLabel(QStringLiteral("下一步：D2 第 2 步 —— 连接设备"),widget);
+    vLayout->addWidget(m_placeholder);
 }
 
 void MainWindow::setupStatusBar()
@@ -74,6 +135,13 @@ void MainWindow::setupStatusBar()
     //
     //  ⚠️ addWidget 和 addPermanentWidget 的区别：后者不会被临时消息顶掉。
     //     所以"版本号"这种常驻信息要用 permanent —— 面试可能会问。
+
+    QStatusBar *sBar = statusBar();
+
+    m_connStatus = new QLabel(QStringLiteral("未连接"),sBar);
+    m_versionLabel = new QLabel(QStringLiteral("v %1").arg(SEMIEQ_VERSION_STR),sBar);
+    sBar->addWidget(m_connStatus);
+    sBar->addPermanentWidget(m_versionLabel);
 }
 
 void MainWindow::showAbout()
@@ -84,6 +152,8 @@ void MainWindow::showAbout()
     //
     //  版本号宏 SEMIEQ_APP_NAME / SEMIEQ_VERSION_STR / SEMIEQ_BUILD_TIME
     //  来自 src/common/version.h（由 CMake 自动生成）—— 别硬编码版本号。
+
+    QMessageBox::about(this,QStringLiteral("关于SemiEqMonitor"),QStringLiteral("应用名：%1\n版本号：%2\n构建时间：%3\nQt版本：5.14.2\n").arg(SEMIEQ_APP_NAME,SEMIEQ_VERSION_STR,SEMIEQ_BUILD_TIME));
 }
 
 void MainWindow::showNotImplemented()
@@ -93,6 +163,9 @@ void MainWindow::showNotImplemented()
     //      —— sender() 是 QObject 提供的"谁给我发的信号"（P12 的延伸）
     //   ② 状态栏 showMessage("「XXX」计划在后续迭代实现", 3000)
     //      —— 第二个参数是自动清除的毫秒数
+    QAction *temp = qobject_cast<QAction*>(sender());
+    if(!temp) return;
+    statusBar()->showMessage(QStringLiteral("[%1] 功能计划在后续迭代实现").arg(temp->text()),3000);
 }
 
 } // namespace semieq
