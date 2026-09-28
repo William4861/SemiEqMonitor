@@ -30,6 +30,11 @@ endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+# ------------------------------------------------------------------ 编辑器支持
+# 生成 compile_commands.json —— VS Code / clangd 等编辑器靠它拿到 Qt 的 include 路径。
+# 没有它，编辑器打开 mainwindow.cpp 就只有语法高亮、没有 API 补全和跳转。
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 option(SEMIEQ_BUILD_TESTS "构建单元测试" ON)
 
 # ------------------------------------------------------------------ Qt 依赖
@@ -100,6 +105,13 @@ if(SEMIEQ_BUILD_TESTS)
     target_link_libraries(semieq_tests PRIVATE semieq_core Qt5::Test)
 
     add_test(NAME semieq_tests COMMAND semieq_tests)
+
+    # D2 第 2 步（连接部分）—— 进程内 QTcpServer 当"设备侧"，自动验收
+    # 运行：scripts\run.bat tcptest
+    add_executable(semieq_tcp_tests tests/test_tcp_connect.cpp)
+    target_link_libraries(semieq_tcp_tests PRIVATE semieq_core Qt5::Test)
+
+    add_test(NAME semieq_tcp_tests COMMAND semieq_tcp_tests)
 endif()
 
 # ============================================================ 构建摘要
