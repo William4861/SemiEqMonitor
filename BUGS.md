@@ -14,6 +14,10 @@
 | BUG-0006 | 2026-09-28 | 中 | 已修复 | 三个 `QLabel*` 成员未 `new` 就加进布局/状态栏 → Qt **静默忽略**，界面空白（不崩不报错） |
 | BUG-0007 | 2026-09-28 | 高 | 已修复 | `QKeySequence::Quit` 在 **Windows 上解析为空** → 「退出」快捷键等于没设 |
 | BUG-0008 | 2026-09-28 | 阻塞 | 已修复 | `CMakeLists.txt` 首行被误粘贴文本 → `Parse error. Expected a command name` |
+| BUG-0009 | 2026-09-29 | 高 | 已修复 | `QTimer *m_connectTimer` 未提前声明 ＋ 缺 `#include <QTimer>` → 5 个"未声明"编译错 |
+| BUG-0010 | 2026-09-29 | 高 | 已修复 | **`abort()` 不触发 `error` 信号** → 连接超时后上层收不到任何通知（报错链路断） |
+| BUG-0011 | 2026-09-29 | 中 | 已修复 | 测试假设"连不上＝连接被拒"，**Windows 实际是超时（~21 秒）** → 测试必然超时失败 |
+| BUG-0012 | 2026-09-29 | 低 | 待修 | 三条集成测试**共用同一个 `QTcpServer`**，前序测试的残留状态干扰后续测试 |
 
 ---
 
@@ -211,6 +215,96 @@
 - **回归验证**：`scripts\build.bat` 重新配置 + 编译通过。
 - 📌 **教训**：**执行命令前先确认焦点在命令面板**；
   以及 **"文件被改坏"时先看 diff 首几行** —— 这类误操作的特征就是"多出与代码无关的自然语言文本"。
+
+---
+
+## BUG-0009 · `QTimer` 成员未声明 ＋ 缺 include（D2 第 2 步）
+
+- **现象**：加"连接超时"后编译失败，一次报 5 个错：
+  ```
+  error: 'm_connectTimer' was not declared in this scope        (220 / 235 / 249 行)
+  error: expected type-specifier before 'QTimer'                (222 行)
+  error: 'QTimer' has not been declared                         (225 行)
+  ```
+- **复现**：`.cpp` 里写 `m_connectTimer = new QTimer(this);`，但 `.h` 没有该成员声明、也没有 `QTimer` 的类型信息。
+- **根因**：C++ 编译**从上往下读**，遇到 `QTimer *m_connectTimer` 必须先知道 `QTimer` **是个类型**（这靠"声明"），
+  而要 `new QTimer(...)` / 取 `&QTimer::timeout` 还必须知道**完整定义**（这靠 `#include`）。两者都缺 → 全报"未声明"。
+- **修复**：`.h` 加 `#include <QTimer>`（或前置声明 `class QTimer;`）＋ 成员 `QTimer *m_connectTimer = nullptr;`；
+  `.cpp` 也补 `#include <QTimer>`（不依赖"传递包含"）。
+- **回归验证**：补完后 `scripts\build.bat` 通过（0 error / 0 warning）。
+- 📌 **教训（一条规律管两种情形）**：
+  1. **只当"指针"存着** → 前置声明就够（写在 `.h`，省编译时间）
+  2. **要 `new` / 调成员 / 取 `&类::成员函数`** → 必须 include **完整定义**
+  3. **谁真正用到，谁自己 include** —— 别靠"上游头文件帮我带进来"；上游一改，下游莫名编译不过
+  → 这与 **BUG-0005（`QMenuBar` 少了 include）是同一知识点的两个方向**：那次"该 include 没 include"，这次"该声明没声明"。
+
+---
+
+## BUG-0010 · `abort()` 不触发 `error` 信号（D2 第 2 步）⭐
+
+- **现象**：给"连接超时"实现后，超时确实中止了连接（界面不再卡），但**上层收不到任何"连接失败"的通知** ——
+  集成测试 `emitsErrorWhenPortClosed` 一直 `errorSpy.wait(3000)` 超时失败。
+- **复现**（修复前）：
+  ```cpp
+  connect(m_connectTimer, &QTimer::timeout, this, [this]() {
+      if (m_socket->state() != QAbstractSocket::ConnectedState) {
+          m_socket->abort();          // ❌ 以为这样就会触发 error → onSocketError → connectionError
+      }
+  });
+  ```
+- **根因**：**`abort()` 只保证触发 `disconnected()`，不会触发 `error()`**。
+  它和 `disconnectFromHost()` 的语义都是"**关闭连接**"，**不是"报告错误"**。
+  所以"超时"这件事，**没有任何人替你 emit 出去** → 报错链路断在半路。
+- **修复**：超时的 lambda 里**自己 emit**：
+  ```cpp
+  m_socket->abort();
+  const QString reason = QStringLiteral("连接超时（%1 ms）").arg(m_config.timeoutMs);
+  LOG_ERROR("ModbusTcpClient", reason);
+  emit connectionError(reason);        // ← 关键：自己通知上层
+  ```
+- **回归验证**：改完 `emitsErrorWhenPortClosed` **立即变绿**（`tcptest` 从 3 passed/2 failed → **4 passed/1 failed**）。
+- 📌 **教训**：**"关闭连接"和"报告错误"是两件事**。
+  凡是想让上层知道"出事了"，就必须**显式 `emit` 自己的错误信号**，不能指望底层 API 顺带帮你发。
+
+---
+
+## BUG-0011 · 测试假设"连不上＝连接被拒"，Windows 实际是"超时"（D2 第 2 步）
+
+- **现象**：`emitsErrorWhenPortClosed` 失败 —— 连一个"没人监听的端口"，3 秒内没等到 `connectionError`。
+- **复现**：写独立程序连 `127.0.0.1:1` 与 `127.0.0.1:1502`（都无人监听），打印 `errorString()`：
+  ```
+  127.0.0.1:1     → SocketTimeoutError: "Network operation timed out"
+  127.0.0.1:1502  → SocketTimeoutError: "Network operation timed out"
+  ```
+- **根因**：**测试按 Unix 行为假设**"连不上会立刻返回 `ConnectionRefusedError`（对端回 RST）」。
+  但本机（Windows）实测报的是 **`SocketTimeoutError`** —— 本机协议栈/防火墙把 RST 吞掉了，表现成**丢包超时**。
+  而**系统 TCP 连接超时约 21 秒**（SYN 重试），测试只等 **3 秒** → 必然失败。
+- **修复**：不在测试里硬等 —— 在 `connectToDevice()` 里用 `QTimer` 实现 `m_config.timeoutMs`（1 秒），
+  超时后 `abort()` ＋ `emit connectionError(...)`（见 BUG-0010）→ 1 秒内就有结果，测试稳定通过。
+- **回归验证**：`emitsErrorWhenPortClosed` PASS。
+- 📌 **教训（两条）**：
+  1. **"连不上"在不同平台/网络环境下表现不同**（立刻拒绝 vs 超时）—— 涉及网络的测试**不能假设时延**
+  2. **别用"3 秒"这种魔法等待时间**；要等外部行为就给它一个**可配置的超时**（这正是 `m_config.timeoutMs` 存在的意义）
+
+---
+
+## BUG-0012 · 集成测试共用 `QTcpServer` 导致相互干扰（**待修**）
+
+- **现象**：`disconnectEmitsDisconnected` 失败（`disconnectFromDevice()` 后 3 秒内没等到 `disconnected`），
+  但**日志里明明有 `[modbusTcpClient] 连接已断开`** —— 说明 `onDisconnected()` 跑了、`emit disconnected()` 也发了。
+- **排查过程**（关键：**先证伪自己的代码，再怀疑测试**）：
+  1. 日志证明实现侧走通 → 不像实现的问题
+  2. 写**独立小程序**（不经 QtTest）复现"连 → 断" → `connected` ✅ `disconnected` ✅ **都收到了**
+  3. → **同一份代码，单独跑就过、在测试序列里跑就失败** → 判定为**测试间共享状态**
+- **根因**：`tests/test_tcp_connect.cpp` 里 `m_server`（`QTcpServer`）是**测试类的成员**，
+  只在 `initTestCase()` 里 `listen()` 一次 → **三条测试共用同一个 server**。
+  前序测试（尤其"连不上"那条）留下的连接/残留状态干扰了后一条测试的连接与断开。
+- **修复（待做）**：改成**每条测试自己起一个 `QTcpServer`**（用完即关），保证测试之间**完全隔离**。
+- **验证（待做）**：修完后预期 `tcptest` **5 passed / 0 failed**。
+- 📌 **教训**：
+  1. **"单独能跑、连起来跑就挂"＝典型的"测试间共享状态"信号**
+  2. **测试要做成"可单独运行、可任意顺序运行"** —— 共享 fixture（尤其共享网络端口/服务器）是常见污染源
+  3. **先证伪自己的实现，再改测试** —— 顺序反了就会去改本来正确的代码
 
 ---
 

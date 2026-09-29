@@ -5,6 +5,106 @@
 
 ---
 
+## 2026-09-29（D2 第 2 步）· TCP 连接：5 个函数 ＋ 连接超时
+
+### 今日目标
+- 实现 `modbustcpclient.cpp` 的**连接部分 5 个函数**：`connectToDevice` / `disconnectFromDevice` / `onConnected` / `onDisconnected` / `onSocketError`
+- 目标：`scripts\run.bat tcptest` 尽量全绿（起点 2 passed / 3 failed）
+
+### 完成情况
+- ✅ 5 个函数全部实现（`modbustcpclient.cpp` **+49 行**、`.h` **+2 行**），编译 **0 error / 0 warning**
+- ✅ **`tcptest`：4 passed / 1 failed**（起点 2/3）
+  - `connectsSuccessfully` ✅ 能连上
+  - `emitsErrorWhenPortClosed` ✅ 连不上能报出原因
+  - `disconnectEmitsDisconnected` ❌ 失败原因＝**测试自身问题**（见"问题 4"）
+- ✅ 自己实现了**连接超时**：`QTimer` ＋ `setSingleShot(true)` ＋ `m_config.timeoutMs`
+- ✅ 摸清了 **TCP 客户端的三层**：`QTcpSocket`(网络层) → `ModbusTcpClient`(采集层，**转发信号**) → `MainWindow`(界面层)
+
+### 遇到的问题
+
+**问题 1：`#include` 刚学完，`QTimer` 又踩同一类坑**
+
+`m_connectTimer` 在 `.h`/`.cpp` 都没提前声明 → 编译报 5 个"未声明"：
+
+```
+error: 'm_connectTimer' was not declared in this scope
+error: expected type-specifier before 'QTimer'
+error: 'QTimer' has not been declared
+```
+
+**怎么解决**：`.h` 加 `#include <QTimer>`（或前置声明 `class QTimer;`）＋ 成员声明 `QTimer *m_connectTimer = nullptr;`；`.cpp` 也补 `#include <QTimer>`。
+
+**学到的**（一条规律管两种情形）：
+- **只当"指针"存着** → 前置声明就够（写在 `.h`）
+- **要 `new` / 调成员 / 取 `&类::成员函数`** → 必须 include **完整定义**
+- **谁真正用到，谁自己 include** —— 别依赖"传递包含"（别人的头文件帮你带进来）。哪天上游头文件删了那行，你的文件会莫名编译不过，且报错点在下游。
+- 📌 这和 D6 的 `QMenuBar` 是**同一个知识点的两个方向**：那次是"该 include 没 include"，这次是"该声明没声明"。
+
+---
+
+**问题 2：`abort()` 不触发 `error` 信号 —— 超时报错链路是断的**
+
+超时后调 `m_socket->abort()`，以为它会像"连接失败"那样触发 `error` → `onSocketError()` → `emit connectionError()`。
+实测：**`abort()` 只会触发 `disconnected()`，不会触发 `error()`** → 上层**永远收不到"连接超时"的提示**。
+
+**怎么解决**：超时的 lambda 里**自己发**通知：
+```cpp
+m_socket->abort();
+const QString reason = QStringLiteral("连接超时（%1 ms）").arg(m_config.timeoutMs);
+LOG_ERROR("ModbusTcpClient", reason);
+emit connectionError(reason);        // ← 别指望 abort 帮你触发 error
+```
+
+**学到的**：**`abort()` / `disconnectFromHost()` 的语义是"关连接"，不是"报错"** ——
+"出错了"这个语义**必须由你自己 `emit`**。改完后 `emitsErrorWhenPortClosed` 立刻变绿。
+
+---
+
+**问题 3：`QTimer` 默认是"循环触发"，不是"只触发一次"**
+
+一开始以为 `start(1000)` = "1 秒后触发一次"。写了个最小程序实测：
+
+```
+timer.start(300)   →  2 秒内触发了 6 次
+```
+
+→ **默认是周期性**的。要"只触发一次"必须 `setSingleShot(true)`。
+
+**学到的**：Qt 里"定时"的**默认语义是周期**（模拟器刷新用的就是周期）；
+**"超时"属于一次性的**，必须显式声明 —— 否则 1 秒后它会**每隔 1 秒都 abort 一次**。
+
+---
+
+**问题 4：`disconnectEmitsDisconnected` 测试失败（**测试自身的问题**）**
+
+现象：`disconnectFromDevice()` 之后 3 秒内没等到 `disconnected` 信号。
+
+**排查过程**（关键的一步：**先怀疑测试，而不是先怀疑代码**）：
+1. 日志里明明有 `[modbusTcpClient] 连接已断开` → **说明 `onDisconnected()` 执行了，`emit disconnected()` 也走了**
+2. 于是写了个**独立小程序**（不经过 QtTest）复现"连 → 断"：
+   ```
+   connected    收到？ 是
+   disconnected 收到？ 是        ← 都正常!
+   ```
+3. → **同一份代码，单独跑就过、在测试里跑就失败** → 结论：**测试之间的相互干扰**
+
+**根因**：三条测试**共用同一个 `QTcpServer`**（`m_server` 是测试类的成员，只在 `initTestCase` 里 listen 一次），
+前序测试留下的连接/残留状态影响了后面这条。
+
+**怎么解决**：**改成每条测试自己起一个 server**（或用完彻底清理）—— 属"测试完善"，放到下一天。
+
+**学到的**：
+- **"单独能跑、连起来跑就挂" 是典型的"测试间共享状态"信号**
+- **先证伪自己的代码**（独立最小复现）**再改测试** —— 顺序反了就会去改本来正确的代码
+
+### 明日计划（9/30）
+- 修 `disconnectEmitsDisconnected`：测试改为**每条独立 server**
+- 跑 `run.bat test` 确认 D2 第 1 步的 **18 passed** 没被破坏
+- **D3**：`poll()` 组帧发送 ＋ `onReadyRead()` 粘包拆包（三步法）
+- 之后：D4 数据库 ＋ README/截图
+
+---
+
 ## 2026-09-28（D6）· 主窗口界面：菜单栏 / 中央区域 / 状态栏 / 关于框
 
 ### 今日目标
