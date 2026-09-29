@@ -1,5 +1,9 @@
 #include "acquisition/modbustcpclient.h"
 
+#include <QTcpSocket>
+#include "common/logger.h"
+#include <QTimer>
+
 // =============================================================================
 //  ⚠️ 填空式骨架 —— 本文件是所有实现体需要你自己补全的地方（D2 / D3 任务）
 //
@@ -201,27 +205,70 @@ void ModbusTcpClient::connectToDevice()
     //            ③ 清空 m_rxBuffer，然后 connectToHost(m_config.host, m_config.port)
     //
     //  验收：无单测，靠 D2 手工联调 —— 起模拟器，点「连接设备」，看日志有没有"连接成功"
+
+    if(!m_socket)
+    {
+        m_socket = new QTcpSocket(this);
+    }
+
+    connect(m_socket,&QAbstractSocket::connected,this,&onConnected,Qt::UniqueConnection);
+    connect(m_socket,&QAbstractSocket::disconnected,this,&onDisconnected,Qt::UniqueConnection);
+    connect(m_socket,QOverload<QAbstractSocket::SocketError>::of(&QAbstractSocket::error),this,&onSocketError,Qt::UniqueConnection);
+    connect(m_socket,&QAbstractSocket::readyRead,this,&onReadyRead,Qt::UniqueConnection);
+
+    m_rxBuffer.clear();
+    LOG_INFO("ModbusTcpClient",QStringLiteral("正在连接%1:%2").arg(m_config.host,m_config.port));
+    if(!m_connectTimer)
+    {
+        m_connectTimer = new QTimer(this);
+
+        m_connectTimer->setSingleShot(true);
+        connect(m_connectTimer,&QTimer::timeout,this,[this]()
+        {
+            if(m_socket->state() != QAbstractSocket::ConnectedState)
+            {
+                m_socket->abort();
+                const QString reason = QStringLiteral("连接超时（%1 ms）").arg(m_config.timeoutMs);
+                LOG_ERROR("ModbusTcpClient", reason);
+                emit connectionError(reason); 
+            }
+        });
+        
+    }
+    m_connectTimer->start(m_config.timeoutMs);
+    m_socket->connectToHost(m_config.host,m_config.port);
 }
 
 void ModbusTcpClient::disconnectFromDevice()
 {
     // TODO(D2-5) 断开连接（一行，但要注意 m_socket 可能是 nullptr）
+    if(!m_socket) return;
+    m_socket->disconnectFromHost();
 }
 
 void ModbusTcpClient::onConnected()
 {
     // TODO(D2-6) 记一条日志 + emit connected()
+    if (m_connectTimer) m_connectTimer->stop();
+    LOG_INFO("ModbusTcpClient",QStringLiteral("已连接%1:%2").arg(m_config.host,m_config.port));
+    emit connected();
 }
 
 void ModbusTcpClient::onDisconnected()
 {
     // TODO(D2-6) 把等待响应的标志清掉 + 记日志 + emit disconnected()
+    m_waitingResponse = false;
+    LOG_WARN("ModbusTcpClient",QStringLiteral("连接已断开"));
+    emit disconnected();
 }
 
 void ModbusTcpClient::onSocketError(QAbstractSocket::SocketError error)
 {
     // TODO(D2-6) 从 m_socket 取 errorString() 记错误日志 + emit connectionError(原因)
-    Q_UNUSED(error)
+    Q_UNUSED(error);
+    const QString reason = m_socket ? m_socket->errorString() : "未知错误";
+    LOG_ERROR("ModbusTcpClient",reason);
+    emit connectionError(reason);
 }
 
 // ======================================================= D3 任务：轮询采集 ===

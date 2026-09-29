@@ -23,6 +23,7 @@
 #include <QByteArray>
 #include <QTcpSocket>
 #include <QVector>
+#include <QTimer>
 
 namespace semieq {
 
@@ -89,6 +90,7 @@ private:
     int                m_transactionId = 0;
     QVector<Parameter> m_parameters;            ///< 采集点定义
     bool               m_waitingResponse = false;
+    QTimer             *m_connectTimer = nullptr;
 };
 
 } // namespace semieq
