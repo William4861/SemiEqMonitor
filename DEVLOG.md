@@ -5,6 +5,115 @@
 
 ---
 
+## 2026-09-30（D3）· 轮询采集：`poll()` ＋ `onReadyRead()` 粘包拆包
+
+### 今日目标
+- 实现 `modbustcpclient.cpp` 的采集部分 2 个函数：`poll()`（组帧发送）＋ `onReadyRead()`（收包拆包解析）
+- 目标：编译 0 error，数据链路"上位机问 → 模拟器答 → 解析成寄存器值"能跑通
+
+### 完成情况
+- ✅ 2 个函数实现（`modbustcpclient.cpp` **+52 行**），编译 **0 error / 0 warning**
+- ✅ `poll()` 4 步齐：判连接 → `m_transactionId` 自增 → 组帧 → `write()`；**并加上了"上一帧未回就跳过"的保护**
+- ✅ `onReadyRead()` 5 步齐：收 → 判长度 → **`left()` 切帧 + `remove()` 删原件** → 解析 → 按序配对 `m_parameters` + 时间戳 → `emit parametersRead()`
+- ✅ **两轮批改**（首轮 5 个问题，第 2 轮全部改对）
+- 📌 求职线今日另跑**第 29 轮流水线**（六步全完成，详见 `.workbuddy/memory/2026-09-30.md`）
+
+### 遇到的问题
+
+**问题 1：拆包只做了一半 —— `left()` 取了帧，却没把原件从缓冲里删掉** ⭐
+
+```cpp
+temp = m_rxBuffer.left(length);   // ❌ 只"复制"出前 length 字节，原缓冲一动不动
+```
+
+**后果**（这是 TCP 新手最典型的坑）：
+```
+第 1 次 readyRead：缓冲=[帧A]        → left(13) 取到帧A ✅
+第 2 次 readyRead：缓冲=[帧A 帧B]    → left(13) 又取到【帧A】❌
+第 3 次 readyRead：缓冲=[帧A 帧B 帧C] → left(13) 还是【帧A】❌
+```
+→ **永远在解析第一帧**，新数据全堆在后面解析不到；而且 `size()` 永远 ≥ `length`，那句 `return` 也永远不触发。
+
+**怎么解决**：`left()` 后面紧跟 `m_rxBuffer.remove(0, length);`
+
+**学到的**：**拆包 ＝ 两个动作**：「**切一份出来**」＋「**把原件删掉**」，少一个都不行。
+`left()` 是**只读**的（返回副本），`remove()` 才是**改动**缓冲的那个。
+
+---
+
+**问题 2：用 `new` 造传出参数 —— 内存泄漏 ＋ 未初始化** ⭐
+
+```cpp
+bool *ok = new bool;              // ❌ ① 没有 delete → 每收一帧泄漏一次
+QString *error = new QString;     //    ② new bool 不做初始化 → *ok 是随机值!
+```
+
+**后果**：第 ② 条比泄漏更危险 —— `*ok` 如果是随机非零值，**解析失败会被当成成功**，错误数据一路流下去。
+
+**怎么解决**：传出参数要的是「**变量的地址**」，不是堆对象：
+
+```cpp
+bool    ok = false;            // 栈变量，初始化好
+QString error;
+QVector<quint16> parseRes = parseReadHoldingRegistersResponse(temp, &ok, &error);
+```
+
+**学到的**：**看到 `T *传出参数`，就给它一个栈变量的地址**（`&ok`）——
+既不泄漏、又天然初始化、还不用手动释放。**`new` 只在"对象需要活过当前作用域"时才用。**
+
+---
+
+**问题 3：提前 `return` 时忘了清状态 → 一次脏数据让采集永久停摆** ⭐⭐（本日最有价值）
+
+```cpp
+if (!ok) {
+    LOG_ERROR("ModbusTcpClient", error);
+    return;                       // ❌ m_waitingResponse 还停在 true
+}
+```
+
+**后果**：
+```
+设备回一帧脏数据 → 解析失败 → m_waitingResponse 停在 true
+   ↓
+下一次 poll()：if (m_waitingResponse) return;   ← 被挡住
+   ↓
+再下一次：还是被挡住…… → 【采集永久停摆，界面上毫无提示】
+```
+
+**怎么解决**：`return` 前补 `m_waitingResponse = false;`
+
+**学到的**：
+- **这是"状态残留"的第二例**（D2 那次是"断开时不清"）—— **同一类问题，一个月内踩了两次**
+- 📌 **通用规律**：函数里**每一条 `return` 路径**都要问一句「**我进来时改过的状态，清理干净了吗？**」
+- 📌 更狠的写法是用 **RAII/守卫**（构造时置位、析构时恢复），但现阶段**逐个 return 检查**就够
+
+---
+
+**问题 4：`m_waitingResponse` 从没被设为 `true` —— 标志位形同虚设**
+
+`poll()` 里加了 `if (m_waitingResponse) return;`，但**忘了在 `write()` 前 `m_waitingResponse = true;`** →
+这个标志永远是 `false`，保护逻辑**完全不生效**（而且 `onDisconnected()` 里那句清理也失去意义）。
+
+**怎么解决**：`poll()` 里"发出请求"和"置位"要**成对出现**。
+
+**学到的**：**"加了一个标志位" ≠ "保护生效了"** —— 置位 / 判断 / 清除，**三处都要有**，漏一处整条逻辑就是装饰。
+
+---
+
+**问题 5：`emit parametersRead(...)` 漏了**
+
+TODO ⑤ 明确要求把填好值的参数列表发出去，但只写了循环里的 `qDebug`，**没发信号** → 上层（界面/数据库）永远收不到数据。
+
+**学到的**：**写完一个"数据出口"函数，回读一遍它的 TODO 清单**——`poll`/`onReadyRead` 这种"骨架里列了 5 步"的地方，**逐条对勾**比通读一遍更可靠。
+
+### 明日计划（10/1）
+- **D4**：`databasemanager.cpp` 9 个函数（已看完两个短课 `BV1mw411M7nw` / `BV1gk4y1w7zy`）
+- 项目收尾：README ＋ 截图 ＋ 联调截图 → **项目进简历**
+- ⚠️ **10/1–10/2 必须投 #11 联讯仪器**（10/03 截止）
+
+---
+
 ## 2026-09-29（D2 第 2 步）· TCP 连接：5 个函数 ＋ 连接超时
 
 ### 今日目标
