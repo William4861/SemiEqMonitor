@@ -3,6 +3,7 @@
 #include <QTcpSocket>
 #include "common/logger.h"
 #include <QTimer>
+#include <QDateTime>
 
 // =============================================================================
 //  ⚠️ 填空式骨架 —— 本文件是所有实现体需要你自己补全的地方（D2 / D3 任务）
@@ -282,7 +283,23 @@ void ModbusTcpClient::poll()
     //            ④ m_socket->write(帧)
     //
     //  ⚠️ 顺手想一想：如果设备很慢，上一帧还没回、这一帧又发出去会怎样？
-    //     要不要加个"上一帧未回应就跳过本次"的保护？（参考实现里留了 TODO 标记）
+    //     要不要加个"上一帧未回应就跳过本次"的保护？（参考实现里留了 TODO 标记）|
+    if(m_waitingResponse) return;
+    if(!m_socket) return;
+    if(m_socket->state() != QAbstractSocket::ConnectedState)
+    {
+        emit connectionError(QStringLiteral("未连接，无法采集"));
+        return;
+    }
+
+    m_transactionId++;
+
+    QByteArray request = buildReadHoldingRegistersRequest(m_transactionId,m_config.slaveId,m_config.startAddress,m_config.registerCount);
+
+    m_waitingResponse = true;
+    m_socket->write(request);
+
+
 }
 
 void ModbusTcpClient::onReadyRead()
@@ -298,6 +315,40 @@ void ModbusTcpClient::onReadyRead()
     //  为什么要 m_rxBuffer：TCP 是【字节流】不是"消息流"。
     //  一次 readyRead 可能只收到半帧，也可能一次收到两帧 ——
     //  没有缓冲区就只能靠运气。
+
+    QByteArray temp = m_socket->readAll();
+    m_rxBuffer.append(temp);
+
+    int length = expectedResponseLength(m_config.registerCount);
+    if(m_rxBuffer.size()<length) return;
+
+    while(m_rxBuffer.size()>=length)
+    {
+        temp = m_rxBuffer.left(length);
+        m_rxBuffer.remove(0,length);
+    
+        bool ok = false;
+        QString error;
+        QVector<quint16> parseRes = parseReadHoldingRegistersResponse(temp,&ok,&error);
+        if(!(ok))
+        {
+            LOG_ERROR("ModbusTcpClient",error);
+            m_waitingResponse = false;
+            return;
+        }
+    
+        qDebug()<<parseRes.size();
+        for(int i=0;i<parseRes.size() && i<m_parameters.size();i++)
+        {
+            m_parameters[i].value = parseRes[i];
+            m_parameters[i].timestamp = QDateTime::currentDateTime();
+
+            qDebug()<<m_parameters[i].value;
+        }
+        emit parametersRead(m_parameters);
+        m_waitingResponse = false;
+    }
+    
 }
 
 } // namespace semieq
