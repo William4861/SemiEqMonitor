@@ -14,6 +14,7 @@ if /i "%TARGET%"=="sim"     goto sim
 if /i "%TARGET%"=="monitor" goto monitor
 if /i "%TARGET%"=="test"    goto test
 if /i "%TARGET%"=="tcptest" goto tcptest
+if /i "%TARGET%"=="dbtest"  goto dbtest
 goto usage
 
 :sim
@@ -40,18 +41,24 @@ if not exist "%BIN_DIR%\semieq_tcp_tests.exe" goto notbuilt
 "%BIN_DIR%\semieq_tcp_tests.exe" %2 %3
 goto end
 
+:dbtest
+if not exist "%BIN_DIR%\semieq_db_tests.exe" goto notbuilt
+"%BIN_DIR%\semieq_db_tests.exe" %2 %3
+goto end
+
 :notbuilt
 echo [FAIL] Executables not found in %BIN_DIR%
 echo        Run scripts\build.bat first.
 exit /b 1
 
 :usage
-echo Usage: run.bat [monitor ^| sim ^| test ^| tcptest]
+echo Usage: run.bat [monitor ^| sim ^| test ^| tcptest ^| dbtest]
 echo.
 echo   monitor  Start the HMI application (default)
 echo   sim      Start the device simulator (start this one FIRST)
 echo   test     Run unit tests (protocol / business logic)
 echo   tcptest  Run TCP connection integration tests (D2 step 2)
+echo   dbtest   Run SQLite persistence tests (D4 steps 6-9)
 echo.
 echo Typical demo:
 echo   1) scripts\run.bat sim      (leave it running)

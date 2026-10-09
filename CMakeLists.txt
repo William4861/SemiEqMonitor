@@ -112,6 +112,13 @@ if(SEMIEQ_BUILD_TESTS)
     target_link_libraries(semieq_tcp_tests PRIVATE semieq_core Qt5::Test)
 
     add_test(NAME semieq_tcp_tests COMMAND semieq_tcp_tests)
+
+    # D4 第 6~9 步（持久层读写）—— 每个用例用独立的临时库，自动验收
+    # 运行：scripts\run.bat dbtest
+    add_executable(semieq_db_tests tests/test_database.cpp)
+    target_link_libraries(semieq_db_tests PRIVATE semieq_core Qt5::Test)
+
+    add_test(NAME semieq_db_tests COMMAND semieq_db_tests)
 endif()
 
 # ============================================================ 构建摘要
