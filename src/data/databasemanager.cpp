@@ -22,7 +22,7 @@
 #include <QSqlError>
 #include <QDebug>
 #include <QSqlQuery>
-#include "common/logger.h"
+#include "common\logger.h"
 
 namespace semieq {
 
@@ -288,8 +288,25 @@ bool DatabaseManager::insertParameter(const Parameter &p)
     //
     //  ⚠️ 这个函数每秒会被调用 8 次（8 个采集点），
     //     所以它必须是"最快的写法"。想一想：每次都 prepare 值得吗？
-    Q_UNUSED(p)
-    return false;
+    
+    QSqlQuery query(m_db);
+    //预编译语句
+    query.prepare("INSERT INTO parameter_log(param_code,param_name,unit,value,recorded_at) VALUES(?,?,?,?,?)");
+    query.addBindValue(p.code);
+    query.addBindValue(p.name);
+    query.addBindValue(p.unit);
+    query.addBindValue(p.value);
+    query.addBindValue(p.timestamp);
+
+    //执行语句 & 若执行失败Logger原因
+    if(!query.exec())
+    {
+        m_lastError = query.lastError().text();
+        LOG_ERROR("DatabaseManager",m_lastError);
+        return false;
+    }
+
+    return true;
 }
 
 bool DatabaseManager::insertAlarm(const Alarm &a)
@@ -299,8 +316,28 @@ bool DatabaseManager::insertAlarm(const Alarm &a)
     //   ② acknowledged 是 bool → 存成 0/1
     //   ③ clearedAt 可能是【无效时间】（报警还没恢复）→ 存 NULL 而不是空字符串！
     //      这一条直接决定 activeAlarms() 能不能正确查到"未恢复的报警"
-    Q_UNUSED(a)
-    return false;
+    
+    QSqlQuery query(m_db);
+    //预编译语句
+    query.prepare("INSERT INTO alarm(param_code,level,message,trigger_value,raised_at,cleared_at,acknowledged,ack_by) VALUES(?,?,?,?,?,?,?,?)");
+    query.addBindValue(a.paramCode);
+    query.addBindValue(static_cast<int>(a.level));//level是枚举类型，转成int类型再存
+    query.addBindValue(a.message);
+    query.addBindValue(a.triggerValue);
+    query.addBindValue(a.raisedAt);
+    if(a.clearedAt.isNull()) query.addBindValue(QVariant(QVariant::String));else query.addBindValue(a.clearedAt);//clearedAt可能为空字符串，不能存空字符串，若为空字符串就存空QVariant
+    query.addBindValue(a.acknowledged);
+    query.addBindValue(a.ackBy);
+
+    //执行语句 & 若执行失败Logger原因
+    if(!query.exec())
+    {
+        m_lastError = query.lastError().text();
+        LOG_ERROR("DatabaseManager",m_lastError);
+        return false;
+    }
+
+    return true;
 }
 
 QVector<Parameter> DatabaseManager::recentParameters(const QString &paramCode, int limit) const
@@ -311,9 +348,37 @@ QVector<Parameter> DatabaseManager::recentParameters(const QString &paramCode, i
     //   ③ while (query.next()) 按【列下标】取值：query.value(0).toString() ...
     //      —— 下标要和 SELECT 里列的顺序严格对上
     //   ④ 时间字段用 QDateTime::fromString(text, Qt::ISODate) 还原
-    Q_UNUSED(paramCode)
-    Q_UNUSED(limit)
-    return QVector<Parameter>();
+   
+    QSqlQuery query(m_db);
+    //预编译语句
+    query.prepare(QStringLiteral("SELECT param_code,param_name,unit,value,recorded_at FROM parameter_log WHERE param_code=? ORDER BY recorded_at DESC LIMIT ?"));
+    query.addBindValue(paramCode);
+    query.addBindValue(limit);
+
+    //执行语句 & 若执行失败Logger原因
+    if(!query.exec())
+    {
+        m_lastError = query.lastError().text();
+        LOG_ERROR("DatabaseManager",m_lastError);
+        return QVector<Parameter>();
+    }
+
+    //组装返回的QVector<Parameter>
+    QVector<Parameter> parameters;
+    while (query.next())
+    {
+        Parameter temp;
+        temp.code = query.value(0).toString();
+        temp.name = query.value(1).toString();
+        temp.unit = query.value(2).toString();
+        temp.value = query.value(3).toDouble();
+        temp.timestamp = QDateTime::fromString(query.value(4).toString(), Qt::ISODate);
+
+        parameters.append(temp);
+    }
+    
+
+    return parameters;
 }
 
 QVector<Alarm> DatabaseManager::activeAlarms() const
@@ -322,7 +387,49 @@ QVector<Alarm> DatabaseManager::activeAlarms() const
     //
     //  ⚠️ 关键 SQL 知识点：判断 NULL 要用 `IS NULL`，不能写 `= NULL`
     //     （SQL 里 NULL 和任何值比较结果都是未知，`= NULL` 永远查不到东西）
-    return QVector<Alarm>();
+
+    QSqlQuery query(m_db);
+    //直接执行SQL语句 & 若执行失败Logger原因
+    if(!query.exec("SELECT param_code,level,message,trigger_value,raised_at,cleared_at,acknowledged,ack_by FROM alarm WHERE cleared_at IS NULL ORDER BY raised_at DESC"))
+    {
+        m_lastError = query.lastError().text();
+        LOG_ERROR("DatabaseManager",m_lastError);
+        return QVector<Alarm>();
+    }
+
+    //组装要返回的QVector<Alarm>
+    QVector<Alarm> alarms;
+    while (query.next())
+    {
+        Alarm temp;
+        temp.paramCode = query.value(0).toString();
+        switch (query.value(1).toInt())
+        {
+        case 0:
+            temp.level = AlarmLevel::Info;
+            break;
+        case 1:
+            temp.level = AlarmLevel::Warning;
+            break;
+        case 2:
+            temp.level = AlarmLevel::Critical;
+            break;    
+        default:
+            break;
+        }
+        temp.message = query.value(2).toString();
+        temp.triggerValue = query.value(3).toDouble();
+        temp.raisedAt = QDateTime::fromString(query.value(4).toString(),Qt::ISODate);
+        temp.clearedAt = QDateTime();
+        temp.acknowledged = query.value(6).toBool();
+        temp.ackBy = query.value(7).toString();
+
+        alarms.append(temp);
+    }
+    
+    
+
+    return alarms;
 }
 
 } // namespace semieq
