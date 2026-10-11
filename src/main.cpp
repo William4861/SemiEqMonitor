@@ -2,6 +2,7 @@
 #include "common/types.h"
 #include "common/version.h"
 #include "ui/mainwindow.h"
+#include "data/databasemanager.h"
 
 #include <QApplication>
 #include <QDate>
@@ -42,6 +43,15 @@ int main(int argc, char *argv[])
                          .arg(QStringLiteral(SEMIEQ_VERSION_STR),
                               QStringLiteral(SEMIEQ_APP_DESC),
                               QStringLiteral(SEMIEQ_BUILD_TIME)));
+
+    // ------------------------------------------------------------------------
+    // 数据库：打开数据库并建表
+    // ------------------------------------------------------------------------
+    semieq::DatabaseManager db;
+    if(!db.open(semieq::DatabaseManager::defaultDatabasePath()) || !db.initSchema()) 
+    {
+        LOG_ERROR("main",QStringLiteral("数据库初始化失败：%1").arg(db.lastError()));
+    }
 
     semieq::MainWindow window;
     window.show();
