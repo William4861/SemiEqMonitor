@@ -22,7 +22,7 @@
 #include <QSqlError>
 #include <QDebug>
 #include <QSqlQuery>
-#include "common\logger.h"
+#include "common/logger.h"
 
 namespace semieq {
 

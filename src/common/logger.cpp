@@ -33,15 +33,15 @@ bool Logger::open(const QString &filePath, LogLevel minLevel)
 
     // 注意：这里不能调用 close()，因为 close() 也会加同一把锁 → 死锁。
     // 所以下面直接把已有文件关掉。
-    if (m_file.isOpen()) {
-        m_stream.flush();
-        m_file.close();
-    }
+        if (m_file.isOpen()) {
+            m_stream.flush();
+            m_file.close();
+        }
 
     const QFileInfo info(filePath);
     const QString   dir = info.absolutePath();
     if (!dir.isEmpty()) {
-        QDir().mkpath(dir);        // 日志目录不存在就创建
+        QDir().mkpath(dir);        // 日志目录不存在就创建，存在也没事
     }
 
     m_minLevel = minLevel;
