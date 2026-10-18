@@ -22,6 +22,36 @@
 | BUG-0014 | 2026-09-30 | 高 | 已修复 | 用 `new bool` / `new QString` 造传出参数 → **内存泄漏 ＋ `*ok` 未初始化（随机值）** |
 | BUG-0015 | 2026-09-30 | 高 | 已修复 | **解析失败提前 `return` 时未清 `m_waitingResponse`** → 一次脏数据导致**采集永久停摆** ⭐ |
 | BUG-0016 | 2026-09-30 | 中 | 已修复 | `m_waitingResponse` **从没被设为 `true`** → 「上一帧未回就跳过」的保护**形同虚设** |
+| **BUG-0017** | 2026-10-03 | 高 | 已修复 | `.gitignore` 里写 `data/` 会**全层级匹配**，连带忽略源码目录 `src/data/`（详见文末） |
+| **BUG-0018** | 2026-10-18 | 中 | 已修复 | `QVector::at(i)` 返回 `const T&` → 用返回值调 `append()` **编译失败**（C++ 1087） |
+| **BUG-0019** | 2026-10-18 | 高 | 已修复 | range-for 写成 `for (Channel ch : m_channels)` **值拷贝** → 数据写进副本，**能编过但曲线永远空** |
+| **BUG-0020** | 2026-10-18 | 高 | 已修复 | 裁剪写错对象：用 `m_channels.capacity()` / `removeFirst()` 裁**通道**而非**点** → 条件恒 false，裁剪失效 |
+
+---
+
+## D5 数据层踩坑（2026-10-18 · 三处都跟"引用"有关）
+
+### BUG-0018 · `at()` 返回 const 引用 → `append()` 编译失败
+
+- **现象**：`error C++(1087) 没有与参数列表匹配的重载函数 … 对象包含阻止匹配的类型限定符`，指向 `m_channels.at(i).values.append(value)`
+- **根因**：`QVector::at(int) const` 返回 **`const T&`**；因此 `values` 是 `const QVector<double>`，而 `append()` 是**非 const** 成员函数 → 无法绑定
+- **修复**：改用 `m_channels[i]`（非 const 的 `operator[]` 返回 `T&`）
+- **回归**：`build.bat` 0 error
+
+### BUG-0019 · range-for 值拷贝 → 数据写进副本（能编过、跑不对）
+
+- **现象**：编译通过，但曲线永远没有数据
+- **根因**：`for (Channel channel : m_channels)` 每次迭代都**拷贝出一个临时 `Channel`**；`channel.values.append(...)` 改的是这个副本，循环体结束即销毁
+- **修复**：`for (Channel &channel : m_channels)`
+- **教训**：**要改容器元素，必须拿引用**。这类错误编译器不报，只能靠"数据有没有真的进去"验证 —— 与 BUG-0018 是一体两面：一个"不能改"，一个"改的是假的"
+
+### BUG-0020 · 裁剪对象写错（裁"通道"而不是"点"）
+
+- **现象**：`values` 无限增长；若把上限调小，会把**通道本身**删掉（界面变空/下标越界）
+- **根因**：写成 `while (m_channels.capacity() > m_capacity) { m_channels.removeFirst(); }` ——
+  ① `capacity()` 是 QVector 的**预留槽位数**（与数据量无关）② `removeFirst()` 删的是**通道**
+- **修复**：`while (channel.values.size() > m_capacity) { channel.values.removeFirst(); }`
+- **教训**：`capacity() ≠ size()`；裁剪前先问清"我裁的到底是哪一层容器"
 
 ---
 
@@ -390,9 +420,23 @@
 
 ---
 
+## BUG-0017 · `.gitignore` 写 `data/` 吞掉源码目录 `src/data/`（D4）
+
+- **现象**：持久层代码写完后 `git status` 看不到 `src/data/databasemanager.cpp`——**文件根本没进版本库**。
+- **复现**：`.gitignore` 里写了 `data/`（本意只忽略数据库文件目录），`git check-ignore -v src/data/databasemanager.cpp` 显示**被忽略**。
+- **根因**：`.gitignore` 里**不带前导斜杠的目录名是"任意层级匹配"**——`data/` 会匹配 `src/data/`；`log/`、`bin/` 同理。
+- **修复**：改成 **`/data/`**（只忽略仓库根目录的 data），并于 10/3 提交 `b27fb95` 一并修复。
+- **回归验证**：`git check-ignore -v <文件>` 无输出 ＝ 不再被忽略；`git status` 能看到源码文件。
+- 📌 **教训**：**`.gitignore` 的目录规则默认全层级匹配**——只想忽略根目录必须加前导 `/`；
+  发现"文件凭空消失"时，**第一件事是 `git check-ignore -v`**。
+
+---
+
 ## 待观察（低优先级）
 
 | 编号 | 说明 | 计划 |
 |---|---|---|
 | TODO-0001 | `ModbusTcpClient::poll()` 未处理"上一帧未响应"的情况，慢设备下可能堆积请求 | D5 采集线程一并处理：加 `m_waitingResponse` 超时判断 |
 | TODO-0002 | 模拟器 `onReadyRead()` 用函数内 `static QByteArray` 缓冲，只支持单客户端 | 当前够用；如需多客户端改为按 socket 存缓冲 |
+| **TODO-0003** | **寄存器量化截断**：模拟器 `static_cast<quint16>(qBound(0.0, value, 65535.0))` **直接截断小数** → **真空度 0.6 → 0，该通道曲线恒为平线**（温度 45.8→45、压力 101.4→101） | **定标（scaling）**：值 ×10 / ×100 存入寄存器、上位机读回后 ÷ 同一系数；或改用 **32 位浮点寄存器**（两个寄存器拼一个 float）。**D5 阶段先按现状画**，在任务卡 §2.0 标为"已知限制"，面试可讲定标方案 |
+| **TODO-0004** | `CurveWidget::appendSamples()` 用**双层循环**按 `code` 匹配（8 通道 × 8 样本 ≈ 64 次字符串比较/帧，约 128 次/秒） | 通道数少时够用；若通道数扩大，改为 **`QHash<QString,int>` 建 code→下标索引**（O(1) 查找），或让 `Parameter` 直接带通道下标 |

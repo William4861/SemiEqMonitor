@@ -5,6 +5,140 @@
 
 ---
 
+## 2026-10-18（D5）· 实时曲线控件：任务卡落地 ＋ 数据层三函数
+
+### 今日目标
+- **先读懂任务卡再动手**：8 个通道到底是什么、数据从哪来、`QPolygonF/drawPolyline` 怎么命名、`connect` 的信号/槽是什么
+- 实现 `curvewidget.cpp` 的数据层三函数：`setChannels()` / `appendSamples()` / `channelColor()`
+- 目标：`scripts\build.bat` → 0 error
+
+### 完成情况
+- ✅ **任务卡补三处解释**（`docs/tasks/D5_实时曲线.md`）：§2.0 八个通道表＋数据形态＋uint16 截断坑；§3.1 `QPolygonF` / `drawPolyline` 命名拆解；§3.2 `connect` 四要素与信号/槽运行时序
+- ✅ **D5-1 `setChannels`**：清空 → 遍历 `definitions` 建 `Channel`（5 个字段 ＋ `color = channelColor(m_channels.size())`，**下标必须在 `append` 之前取**）→ `update()`
+- ✅ **D5-2 `appendSamples`**：外层样本／内层通道按 `code` 匹配 → `values.append` → `while (size > m_capacity) removeFirst()` 裁剪 → `isWrote` → **循环外**只 `update()` 一次
+- ✅ **D5-3 `channelColor`**：`switch (index % 8)` 8 色 ＋ `default` 深灰
+- ✅ **编译 `[OK] Build succeeded`**
+- 🔍 附带发现并记录 **TODO-0003**：Modbus 保持寄存器是 **uint16**，模拟器 `static_cast<quint16>(qBound(0.0, value, 65535.0))` **直接截断小数** → 真空度 0.6 → 0，该通道曲线永远是平线
+
+### 遇到的问题（3 个，每个都卡了一轮）
+1. **`QVector::at(i)` 返回 `const T&`** → 拿返回值调 `append()` 直接编译失败：
+   `error C++(1087) 没有与参数列表匹配的重载函数 … 对象包含阻止匹配的类型限定符`
+2. **range-for 写成值拷贝** `for (Channel channel : m_channels)` → 数据 append 到**栈上临时副本**，循环结束即销毁。**能编过，但曲线永远没有数据**（比编译错更难查）
+3. **裁剪对象写错**：`while (m_channels.capacity() > m_capacity) m_channels.removeFirst();` —— 拿"通道表的容量"当"点数"，删的是**通道**不是**数据**；实际条件恒为 false（8 > 300），裁剪一行都没生效
+
+### 怎么解决
+- `at(i)` / `first()` / `last()` 都是只读 → **要写就用 `m_channels[i]`**
+- **要改容器元素，range-for 必须写引用**：`for (Channel &channel : ...)`
+- 要裁的是"这个通道存了几个点"：`while (channel.values.size() > m_capacity) channel.values.removeFirst();`
+- 顺手删掉流程里的 `LOG_INFO`（每秒 16 条会写爆日志），`update()` 从内层循环提到循环外
+
+### 学到的
+- **`QVector::capacity()` ≠ `size()`**：capacity 是预留的内存槽位数（与数据多少无关），size 才是元素个数
+- **"能编译过" ≠ "跑得对"**：值拷贝这类错编译器不会报，只能靠"数据有没有真的进去"验证
+- `QString::arg(i, value)` 的第二个参数是**最小字段宽度**，不是第二个值（要链式 `.arg(i).arg(v)`）
+- 数据层的正确性**无法靠肉眼确认** —— 必须等 D5-7 画出来 / D5-10 接线后看曲线动没动
+
+### 明日计划
+- D5-4/5/6：`plotArea()` / `computeRange()`（**真空度通道 min == max，会真实触发除零**）/ `drawGridAndAxes()`
+- D5-7/8/9：规格虚线＋折线（`QPolygonF` + `drawPolyline` + 抗锯齿）/ 图例 / `paintEvent` 组装
+- D5-10 接线 → D5-11 联调（`sim` + `monitor` → **曲线在动**）
+- 求职线：**周一 10:30 催大族**（本周唯一能改变结果的动作）
+
+---
+
+## 2026-10-11 · 数据库初始化接线（commit `0551756`）
+
+> 📌 本条按提交记录回补（10/11 当日未写）
+
+### 今日目标
+- 把持久层接进 `main.cpp`：启动时 `open(defaultDatabasePath())` → `initSchema()`，让程序**首次真实建库**
+
+### 完成情况
+- ✅ `src/main.cpp` 新增 10 行接线（commit `0551756`）
+- ✅ 首跑 `run.bat monitor` 后 `build/bin/data/semieq.db` 生成，实测 **6 表 3 索引**
+- ✅ D4 完整链路闭环（建库 → 读写 → 测试）
+
+### 学到的
+- **"接线"本身没几行，但它证明整条链路是通的**——之前 dbtest 全绿只是"函数对"，建库成功才是"系统对"
+
+### 明日计划
+- 进入 D5：实时曲线（P36–P38 绘图）
+
+---
+
+## 2026-10-10 · D4-6~9 四个持久层函数（commit `fcbbaee`）
+
+> 📌 本条按提交记录回补
+
+### 今日目标
+- 实现 `insertParameter` / `insertAlarm` / `recentParameters` / `activeAlarms` 四个函数
+- 目标：`dbtest` 18/18 全绿
+
+### 完成情况
+- ✅ `databasemanager.cpp` +116/-9（commit `fcbbaee`）
+- ✅ **`dbtest` 18 passed / 0 failed**
+- ✅ 关键点：**`QSqlQuery` 预编译 + `addBindValue` 按列顺序**；**NULL 值用 `QVariant(QVariant::String)` 显式绑**；时间字段走 **`QDateTime::fromString(串, Qt::ISODate)`**
+
+### 遇到的问题
+1. **NULL 绑定**：空字符串 ≠ NULL——想写"没有值"，必须绑**空的 `QVariant`**，否则列里存的是 `""`
+2. **时间格式**：字符串直接塞会被 SQLite 当普通文本比较；统一 **ISODate** 才能正确排序/筛选
+
+### 学到的
+- 持久层"能存进去"和"查得对"是两件事——**测试要覆盖 NULL / 时间边界**
+
+### 明日计划
+- `main.cpp` 接线（次日 `0551756`）
+
+---
+
+## 2026-10-09 · SQLite 持久层单元测试 18 用例（commit `b742951`）
+
+> 📌 本条按提交记录回补
+
+### 今日目标
+- 给持久层补测试：**18 个用例** + CMake 的 `dbtest` 目标 + `run.bat dbtest` 子命令
+
+### 完成情况
+- ✅ 新增 `tests/test_database.cpp`（388 行，commit `b742951`）
+- ✅ `CMakeLists.txt` +7（dbtest 目标）；`scripts/run.bat` +9/-1（新增 dbtest 分支）
+- ✅ 18 用例覆盖：建表/幂等 initSchema/参数插入/报警插入/最近 N 条/活动报警筛选
+
+### 学到的
+- **测试文件比实现文件还长是正常的**——用例要覆盖"正常/边界/空数据"
+- 用**独立测试库**跑用例（不碰业务库），跑完清理——避免污染
+
+### 明日计划
+- 补齐四个业务函数（次日 `fcbbaee`）
+
+---
+
+## 2026-10-03 · SQLite 持久层落地 + .gitignore 事故（commit `b27fb95`）
+
+> 📌 本条按提交记录回补
+
+### 今日目标
+- 实现 `DatabaseManager`：建表 / 打开 / 关闭 / `initSchema`（含事务）
+- 修掉 `.gitignore` 误忽略 `src/data/` 的事故
+
+### 完成情况
+- ✅ `src/data/databasemanager.cpp`（328 行）+ `.h`（73 行）新建（commit `b27fb95`）
+- ✅ `initSchema` 用**事务**包裹六张表 + 索引，失败回滚
+- ✅ 修复 `.gitignore`（7 行改动）
+
+### 遇到的问题
+1. 🔴 **`.gitignore` 写 `data/` 会吞掉 `src/data/`**——源码目录被忽略，`git add` 根本加不进去
+   → 改成 **`/data/`**（只忽略根目录），改完 `git check-ignore -v <文件>` 验证
+2. **建表要幂等**：`CREATE TABLE IF NOT EXISTS` + 事务，重复启动不报错
+
+### 学到的
+- **`.gitignore` 的 `dir/` 是"任意层级匹配"**——只忽略根目录必须写 `/dir/`（`log/`、`bin/` 同理）
+- 建库/建表这类"一次性动作"要能**反复执行不炸**（幂等）
+
+### 明日计划
+- 补单元测试（10/9 `b742951`）
+
+---
+
 ## 2026-09-30（D3）· 轮询采集：`poll()` ＋ `onReadyRead()` 粘包拆包
 
 ### 今日目标
