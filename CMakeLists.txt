@@ -80,7 +80,9 @@ endif()
 set(SEMIEQ_APP_SOURCES
     src/main.cpp
     src/ui/mainwindow.cpp
-    src/ui/mainwindow.h)
+    src/ui/mainwindow.h
+    src/ui/curvewidget.cpp
+    src/ui/curvewidget.h)
 
 add_executable(SemiEqMonitor ${SEMIEQ_APP_SOURCES})
 

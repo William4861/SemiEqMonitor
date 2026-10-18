@@ -1,6 +1,8 @@
 #include "ui/mainwindow.h"
 
 #include "common/version.h"     // SEMIEQ_APP_NAME / SEMIEQ_VERSION_STR / SEMIEQ_BUILD_TIME
+#include "ui/curvewidget.h"
+#include "acquisition/modbustcpclient.h"
 
 #include <QMenuBar>
 #include <QKeySequence>
@@ -9,30 +11,68 @@
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QComboBox>
+#include <QTimer>
 // =============================================================================
-//  ⚠️ 填空式骨架 —— 实现体由你补全（D6 任务，正好与 Qt 第二章「界面编写」同步）
+//  主窗口实现 —— 分两批完成：
+//    ✅ D6（已完成）：菜单栏 / 中央区域骨架 / 状态栏 / 关于框 / 未实现提示
+//    ⏳ D5（本次）：采集接线 —— 「连接设备」→ 客户端 + 轮询定时器 + 状态栏 + 喂曲线
 //
-//  为什么这块留给你写：
-//    你接下来要学的 P17 讲的就是 QMainWindow 的菜单栏/工具栏/状态栏/中心部件 ——
-//    这份文件就是那些知识点的直接应用。学完 P17 再回来填，是最省力的顺序。
-//
+//  任务卡：docs/tasks/D5_实时曲线.md（接线部分 = §4 的 D5-10）
 //  对答案：git diff ref/skeleton -- src/ui/mainwindow.cpp
-//  任务卡：docs/tasks/D6_主窗口界面.md（学到 P17 时我再给你）
 //
-//  已给你写好的部分：构造函数（它规定了这个窗口由哪几块拼成）+ 析构函数
+//  已给你写好的部分：构造函数、D6 全部函数、D5 的中央区域（曲线+下拉框）与默认通道表
 // =============================================================================
 
 namespace semieq {
+
+// =================================================== D5：默认采集点定义 ======
+//  ✅ 已给（配置数据，不需要你写）—— 8 个通道与设备模拟器（apps/simulator）的
+//  registerNames / Units / Limits 保持一致；真实项目里应来自配置/数据库，
+//  这里为演示直接内联（面试可如实讲）。
+//  ⚠️ 顺序必须与寄存器地址顺序一致（0x0000 起的 8 个）。
+namespace {
+
+QVector<Parameter> defaultChannels()
+{
+    QVector<Parameter> channels;
+    channels.reserve(8);
+
+    const auto add = [&channels](const QString &code, const QString &name,
+                                 const QString &unit, double lo, double hi) {
+        Parameter p;
+        p.code       = code;
+        p.name       = name;
+        p.unit       = unit;
+        p.lowerLimit = lo;
+        p.upperLimit = hi;
+        channels.append(p);
+    };
+
+    add(QStringLiteral("TEMP_CH1"), QStringLiteral("腔体温度"),   QStringLiteral("℃"),    20.0, 80.0);
+    add(QStringLiteral("PRES_CH1"), QStringLiteral("腔体压力"),   QStringLiteral("Pa"),   90.0, 120.0);
+    add(QStringLiteral("FLOW_CH1"), QStringLiteral("冷却水流量"), QStringLiteral("L/min"), 1.0, 12.0);
+    add(QStringLiteral("RPM_CH1"),  QStringLiteral("主轴转速"),   QStringLiteral("rpm"),   0.0, 3000.0);
+    add(QStringLiteral("POWR_CH1"), QStringLiteral("加热功率"),   QStringLiteral("W"),     0.0, 900.0);
+    add(QStringLiteral("VACM_CH1"), QStringLiteral("真空度"),     QStringLiteral("kPa"),   0.0, 1.0);
+    add(QStringLiteral("BELT_CH1"), QStringLiteral("传送带速度"), QStringLiteral("mm/s"),  0.0, 120.0);
+    add(QStringLiteral("CURR_CH1"), QStringLiteral("电源电流"),   QStringLiteral("A"),     0.0, 16.0);
+
+    return channels;
+}
+
+} // namespace
 
 // ------------------------------------------------------- 已实现（不用改） ---
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
-    // 窗口 = 菜单栏 + 中心区域 + 状态栏，三块各自一个 setup 函数
+    // 窗口 = 菜单栏 + 中心区域 + 状态栏 + 采集接线（D5 加），四块各自一个 setup 函数
     setupMenuBar();
     setupCentralArea();
     setupStatusBar();
+    setupAcquisition();   // D5：建客户端 + 轮询定时器 + 连信号（函数体待你补，见文件底部）
 
     setWindowTitle(QStringLiteral("%1 v%2 —— 半导体设备数据采集与监控")
                        .arg(QStringLiteral(SEMIEQ_APP_NAME), QStringLiteral(SEMIEQ_VERSION_STR)));
@@ -109,22 +149,32 @@ void MainWindow::setupMenuBar()
 
 void MainWindow::setupCentralArea()
 {
-    // TODO(D6-2) 建中心区域。
-    //   ① new 一个 QWidget 作为 central，setCentralWidget() 挂上去
-    //   ② 给它加一个布局（QVBoxLayout）
-    //   ③ 先放一个 QLabel 占位（成员 m_placeholder），内容写清"下一步要做什么"
-    //      —— 这就是所谓的"可运行的骨架"，任何时候程序都能跑起来
-    //
-    //  💡 提示：布局要 new 在 central 上（parent 传 central），
-    //     这样 central 析构时布局自动回收。
+    // ✅ D6-2 已完成（QWidget + QVBoxLayout 骨架）；D5 起中央区域升级为：
+    //   顶部通道选择器（QComboBox）＋ 实时曲线（CurveWidget，自绘）
 
     QWidget *widget = new QWidget(this);
     setCentralWidget(widget);
 
     QVBoxLayout *vLayout = new QVBoxLayout(widget);
 
-    m_placeholder = new QLabel(QStringLiteral("下一步：D2 第 2 步 —— 连接设备"),widget);
-    vLayout->addWidget(m_placeholder);
+    // —— D5：通道选择器 + 实时曲线 ——
+    //   通道定义来自本文件顶部 defaultChannels()，下拉框与曲线共用同一份，
+    //   保证"下拉选中的通道"和"曲线画的通道"始终对得上。
+    m_channelSelector = new QComboBox(widget);
+    for (const Parameter &channel : defaultChannels()) {
+        m_channelSelector->addItem(channel.name);
+    }
+    vLayout->addWidget(m_channelSelector);
+
+    m_curve = new CurveWidget(widget);
+    m_curve->setChannels(defaultChannels());   // 通道定义先交给曲线；之后只管喂数据
+    vLayout->addWidget(m_curve, 1);            // 拉伸系数 1：窗口放大时曲线吃掉剩余空间
+
+    // 下拉切换 → 曲线换显示通道（⭐"改状态 → update()"的标准套路，P38 刚验收）
+    //   ⚠️ currentIndexChanged 有 int / QString 两个重载 → 用 QOverload<int>::of 指定要哪个
+    //   （实测坑：小写 qOverload 是 C++14 变量模板，本项目 C++11 编不过 → 用类的 of() 形式）
+    connect(m_channelSelector, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            m_curve, &CurveWidget::setCurrentChannel);
 }
 
 void MainWindow::setupStatusBar()
@@ -166,6 +216,59 @@ void MainWindow::showNotImplemented()
     QAction *temp = qobject_cast<QAction*>(sender());
     if(!temp) return;
     statusBar()->showMessage(QStringLiteral("[%1] 功能计划在后续迭代实现").arg(temp->text()),3000);
+}
+
+// ==================================================== D5：采集接线（待你实现）=
+
+void MainWindow::setupAcquisition()
+{
+    // TODO(D5-10②) 建客户端 + 轮询定时器 + 连信号（细节见 docs/tasks/D5_实时曲线.md）：
+    //   ① ModbusTcpClient::Config cfg：
+    //        host = "127.0.0.1"；port = 1502（⚠️ 模拟器端口，不是标准 502）；
+    //        slaveId = 1；registerCount = 8；其余默认
+    //   ② m_client = new ModbusTcpClient(cfg, this);
+    //      m_client->setParameters(defaultChannels());
+    //        ⚠️ 不喂定义的话，parametersRead 发出来的是【空列表】——数据对不上
+    //   ③ m_pollTimer = new QTimer(this); 间隔 500ms（＝模拟器刷新周期）
+    //      connect：m_pollTimer timeout → m_client poll
+    //   ④ 连客户端 4 个信号（信号声明在基类 IDeviceClient，用 &IDeviceClient::xxx）：
+    //        connected        → onDeviceConnected
+    //        disconnected     → onDeviceDisconnected
+    //        parametersRead   → onParametersRead
+    //        connectionError  → onConnectionError
+    //   （定时器先别 start —— 连上以后由 onDeviceConnected 启动）
+}
+
+void MainWindow::onConnectDevice()
+{
+    // TODO(D5-10④) 菜单「连接设备」被点击（记得把 setupMenuBar 里 actConnet 那行 connect
+    //   从 showNotImplemented 改成本槽）：
+    //   ① 状态栏先提示"连接中…"
+    //   ② m_client->connectToDevice()
+    //   ③ 防抖：已经连着/正在连就直接 return（想清楚怎么判断——isConnected()？）
+}
+
+void MainWindow::onDeviceConnected()
+{
+    // TODO(D5-10④) ① m_connStatus 显示 "已连接 127.0.0.1:1502"（可以从 config 拼）
+    //              ② m_pollTimer->start()   ← 从这一刻起，每 500ms 问一次设备
+}
+
+void MainWindow::onDeviceDisconnected()
+{
+    // TODO(D5-10④) ① m_pollTimer->stop() ② m_connStatus 回到 "未连接"
+}
+
+void MainWindow::onParametersRead(const QVector<semieq::Parameter> &params)
+{
+    // TODO(D5-10⑤) 就一行：m_curve->appendSamples(params);
+    //   ⚠️ 忍住不要在这里画图 —— 数据驱动绘制：这里只改数据，
+    //      曲线内部自己 update() 请求重绘，画由 paintEvent 负责（P38 ④ 刚验收过）
+}
+
+void MainWindow::onConnectionError(const QString &reason)
+{
+    // TODO(D5-10④) ① m_pollTimer->stop() ② 状态栏显示 "连接失败：" + reason
 }
 
 } // namespace semieq
