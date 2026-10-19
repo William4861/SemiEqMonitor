@@ -26,6 +26,11 @@
 | **BUG-0018** | 2026-10-18 | 中 | 已修复 | `QVector::at(i)` 返回 `const T&` → 用返回值调 `append()` **编译失败**（C++ 1087） |
 | **BUG-0019** | 2026-10-18 | 高 | 已修复 | range-for 写成 `for (Channel ch : m_channels)` **值拷贝** → 数据写进副本，**能编过但曲线永远空** |
 | **BUG-0020** | 2026-10-18 | 高 | 已修复 | 裁剪写错对象：用 `m_channels.capacity()` / `removeFirst()` 裁**通道**而非**点** → 条件恒 false，裁剪失效 |
+| **BUG-0021** | 2026-10-19 | 高 | 已修复 | 网格/刻度的 y 用**数据公式**（`maxValue-minValue`）算像素 → 换通道网格崩到画面外 |
+| **BUG-0022** | 2026-10-19 | 高 | 已修复 | 折线 y 用 `plot.top() + ratio*height` → **整图上下颠倒**（屏幕 y 向下增长） |
+| **BUG-0023** | 2026-10-19 | 高 | 已修复 | 用 **`drawLines`** 画折线 → 点两两配对成断线，应 `drawPolyline` |
+| **BUG-0024** | 2026-10-19 | 高 | 已修复 | **`i / m_capacity` 整数除法** → 所有点 x 相同，曲线缩成竖线 |
+| **BUG-0025** | 2026-10-19 | 中 | 已修复 | `values.last()` 未判空 ＋ `if(v)` 把**值 0** 当成"无数据" → 崩溃 / 恒 0 通道误显示 |
 
 ---
 
@@ -52,6 +57,52 @@
   ① `capacity()` 是 QVector 的**预留槽位数**（与数据量无关）② `removeFirst()` 删的是**通道**
 - **修复**：`while (channel.values.size() > m_capacity) { channel.values.removeFirst(); }`
 - **教训**：`capacity() ≠ size()`；裁剪前先问清"我裁的到底是哪一层容器"
+
+---
+
+## D5 绘图层踩坑（2026-10-19 · 五个致命 + 两个习惯）
+
+### BUG-0021 · 用数据公式算像素位置 → 网格随量程崩掉
+
+- **现象**：换了通道（量程 0–3000）后网格线全部画到控件外，画面只剩边框
+- **根因**：`int y = plot.top() + i * (maxValue - minValue) / 4;` —— y 是**像素坐标**，只能用 `plot.height()`；`maxValue-minValue` 是**数值跨度**，与像素无关
+- **修复**：`int y = plot.top() + i * plot.height() / 4;`
+- **教训**：**画在哪（像素）用 plot；代表多少（数值）用 min/max** —— 这是整个绘图的根
+
+### BUG-0022 · Y 方向写反 → 整图上下颠倒
+
+- **现象**：最大值画在最底部、最小值画在最顶部；规格线 USL 跑到 LSL 下面
+- **根因**：屏幕坐标 **y 向下增长**，所以"值越大 → y 越小" → 必须 `bottom() - ratio*height`
+- **修复**：折线与两条规格线全部改为 `plot.bottom() - (v - minValue)/(maxValue - minValue) * plot.height()`
+- **教训**：**数值向上，像素向下。** 手绘图表第一个坑，面试高频
+
+### BUG-0023 · `drawLines` 画折线 → 断线
+
+- **现象**：曲线画出来是一段一段的（隔一段连一段），不是连续折线
+- **根因**：`QPolygonF` 是 `QVector<QPointF>` 的子类，`drawLines(polygon)` 匹配到 `drawLines(const QVector<QPointF>&)` → 它把点**两两配对**画独立线段
+- **修复**：`painter.drawPolyline(polygon);`
+- **命名对照**：`drawLine` 一条 ｜ `drawLines` 多条**断开** ｜ **`drawPolyline` 一条连续** ｜ `drawPolygon` 折线＋自动闭合
+
+### BUG-0024 · 整数除法让所有点挤在同一列
+
+- **现象**：曲线变成贴着左边框的一条竖线
+- **根因**：`i / m_capacity` 是 `int/int` → 结果为 0；且分母应为 `m_capacity - 1`
+- **修复**：`plot.left() + (double)i / (m_capacity - 1) * plot.width()`
+- **教训**：**除号两边只要有 int，结果就是 int**；跨满全程要用 `N-1` 个间隔
+
+### BUG-0025 · 把"值 0"当成"数据为空"（且先崩了一次）
+
+- **现象**：① 图例一画就崩；② 修完崩溃后，真空度通道（恒 0）一直显示"（暂无数据）"
+- **根因**：① `values.last()` 在判空之前调用 → 空容器越界；② `if (v)` 判断的是**值是否为 0**，不是容器是否为空
+- **修复**：先判 `ch.values.isEmpty()`，为空再取 `last()`
+- **教训**：**值域的空 ≠ 容器的空。** 判断"有没有数据"只能看 `isEmpty()` / `size()`
+
+### 两个"习惯"类问题（不计缺陷号）
+
+| 问题 | 修法 |
+|---|---|
+| `Channel ch = m_channels[...]` 值拷贝（**同类第 3 次**：`at()` → range-for → 此处） | 一律 `const Channel &ch` |
+| `drawLegend` 未 `setPen`，继承了 `drawCurves` 留下的 2px 通道色笔 → 字变粗 | **每个绘制函数自己设 pen**，`QPainter` 的笔/刷/字体都是**跨函数保留的状态** |
 
 ---
 

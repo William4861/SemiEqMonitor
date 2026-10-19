@@ -5,6 +5,55 @@
 
 ---
 
+## 2026-10-19（D5 续）· 实时曲线绘图层：5 个绘制函数全部完成
+
+### 今日目标
+- 完成 `curvewidget.cpp` 剩下的 6 个函数：`plotArea` / `computeRange` / `drawGridAndAxes` / `drawCurves` / `drawLegend` / `paintEvent`
+- 目标：屏幕上先看到网格与刻度，把"画"这一半做完，接线留给明天
+
+### 完成情况
+- ✅ **D5-4 `plotArea()`**：一行公式，四边留白 56 / 16 / 10 / 26（800×400 → `QRect(56,10,728,364)`）
+- ✅ **D5-5 `computeRange()`**：判空 → 首值初始化 → 遍历求 min/max → 并入 LSL/USL → 防除零
+- ✅ **D5-6 `drawGridAndAxes()`**：边框＋内部 3 横 3 竖＋左侧 5 个刻度；文字框高用 `fontMetrics().height()`，以 y 为中心
+- ✅ **D5-7 `drawCurves()`**：深红虚线规格线（`(192,57,43)` · `Qt::DashLine` · 1px）＋ `QPolygonF` + `drawPolyline` 折线（通道色 2px · 抗锯齿）
+- ✅ **D5-8 `drawLegend()`**：中文名＋最新值＋单位；半透明白底压网格＋通道色文字
+- ✅ **D5-9 `paintEvent()`**：白底 → `plotArea()` → `computeRange()` → 调绘制函数（只装配，不画）
+- ✅ 全过程 **build 0 error**（每改完一个函数编一次）
+- ⏭️ **D5-10 接线（6 处）已梳理清楚**（Config / setParameters / 定时器 / 4 个基类信号 / 菜单改槽 / 状态栏），**待明日写**
+
+### 遇到的问题（今天 7 个，全部出在"绘图"上）
+1. 网格与刻度的 y 用了**数据公式** `maxValue - minValue` 算像素 → 换通道（如转速 0–3000）网格直接崩到画面外
+2. 折线的 y 用了 `plot.top() + ratio * height` → **整张图上下颠倒**
+3. 用 **`drawLines`** 画折线 → 点是**两两配对**的，画出来是一段一段的断线
+4. **`i / m_capacity` 整数除法** → 前 299 个点 x 全相同，曲线缩成一条竖线
+5. `Channel ch = m_channels[...]` **值拷贝**（同类错误第 3 次）
+6. `values.last()` 未判空即调用 → 空容器越界；且用 `if (v)` 判断"有没有数据" —— **把"值 0"当成了"数据为空"**
+7. `drawLegend` 没 `setPen` → 继承了上一个函数留下的 2px 通道色笔，字变粗
+
+### 怎么解决
+- **两套坐标分开**：画在哪用 `plot.height()/width()`；代表多少用 `maxValue - minValue`
+- 屏幕 y 向下 → `y = plot.bottom() - ratio * height`
+- 折线一律 **`drawPolyline`**（`Poly`＝多，连成一条）
+- 除法前先 `(double)` 转换
+- 遍历一律 `const T&`
+- **判"有没有数据"看容器 `isEmpty()`，不看值**
+- **每个绘制函数自己 `setPen`**，不依赖上一个函数的状态
+
+### 学到的
+- **`QRect` 是像素矩形**：`right() = left + width - 1`、`bottom() = top + height - 1`（对比 `QRectF` 无 -1）
+- **`QFontMetrics`**：`horizontalAdvance(text)` 量文字宽（`width()` 已废弃）、`height()` 是行高
+- **`arg` 的格式化重载**：`.arg(double, fieldWidth, fmt, prec)`；而 `int` 版第三参是**进制**——两版含义不同，极易错
+- **`const` 成员函数是"承诺"**：声明 const → `this` 是 const 指针 → 成员只能拿 `const&`；要改成员的 `appendSamples` 就不能声明 const
+- **正确 ≠ 好**：`y - height/8` 配 `height/4` 恰好对上中心，但把正确性寄托在"两个数成 2:1"上；改成 `y - textH/2` 才"显然正确"
+
+### 明日计划
+- **10:00 打大族校招专线 `0755-8663 2722`**（问领导签字节点）
+- **D5-10 接线 6 处** → `run.bat sim` ＋ `run.bat monitor` → **曲线动起来**（今晚唯一没闭环的）
+- 改 D5 review 意见 → QThread 线程化开工
+- 求职：10/21 邦正答复 ｜ 10/22 向奥普特申请延期到 10/30 ｜ 10/23 招聘会（鼎匠优先）
+
+---
+
 ## 2026-10-18（D5）· 实时曲线控件：任务卡落地 ＋ 数据层三函数
 
 ### 今日目标
