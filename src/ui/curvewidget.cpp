@@ -174,7 +174,7 @@ QRect CurveWidget::plotArea() const
     //         width() - kMarginLeft - kMarginRight,
     //         height() - kMarginTop - kMarginBottom)
     //   （width()/height() 是控件当前尺寸；窗口拉伸时自动变大变小）
-    return QRect();
+    return QRect(kMarginLeft,kMarginTop,width()-kMarginLeft-kMarginRight,height()-kMarginTop-kMarginBottom);
 }
 
 void CurveWidget::computeRange(double &minValue, double &maxValue) const
@@ -185,6 +185,34 @@ void CurveWidget::computeRange(double &minValue, double &maxValue) const
     //      （为什么：规格线必须在画面里看得见）
     //   ③ ⚠️ 防除零：如果 max-min 小到几乎为 0（数据几乎一条直线），上下各撑开一点
     //      （想想不撑开会怎样——映射公式的分母就是它）
+
+    //默认量程
+    if(m_channels.isEmpty() || m_current < 0 || m_current >= m_channels.size() || m_channels[m_current].values.isEmpty())
+    {
+        minValue = 0.0;
+        maxValue = 100.0;
+        return;
+    }
+
+    //初始化
+    minValue = m_channels[m_current].values.first();
+    maxValue = m_channels[m_current].values.first();
+
+    //遍历并合并规格线
+    for(const double value : m_channels[m_current].values)//double只有8字节，按值遍历更快
+    {
+        minValue = qMin(value,minValue);
+        maxValue = qMax(value,maxValue);
+    }
+    minValue = qMin(m_channels[m_current].lowerLimit,minValue);
+    maxValue = qMax(m_channels[m_current].upperLimit,maxValue);
+    
+    //防止除零
+    if(maxValue - minValue < 1e-9)
+    {
+        maxValue += 1.0;
+        minValue -= 1.0;
+    }
 }
 
 void CurveWidget::drawGridAndAxes(QPainter &painter, const QRect &plot,
@@ -198,6 +226,33 @@ void CurveWidget::drawGridAndAxes(QPainter &painter, const QRect &plot,
     //   ③ 刻度数字：每行在左侧留白里画一个文字（保留 1 位小数：QString::number(值, 'f', 1)）
     //      对齐用带 flags 的 drawText 重载（见任务卡 §3 的小补充）
     //   ④ 纵向 5 条竖线（不配文字）
+
+    //先用深灰色画边框
+    painter.setPen(QPen(QColor(100,100,100),1));//深灰色，线宽1
+    painter.drawRect(plot);
+
+    //画框内3条横线、3条竖线
+    for(int i=1;i<=3;i++)
+    {
+        const int y = plot.top() + i * plot.height()/4;
+
+        painter.drawLine(plot.left(),y,plot.right(),y);
+
+        const int x = plot.left() + i * plot.width()/4;
+
+        painter.drawLine(x,plot.top(),x,plot.bottom());
+    }
+
+    //给5条横线标刻度
+    painter.setPen(QPen(QColor(80,80,80),1));//用浅灰色标刻度
+    for(int i=0;i<=4;i++)
+    {
+        const int y = plot.top() + i * plot.height()/4;
+        const double v = maxValue - i * (maxValue - minValue)/4;
+
+        const int textH = painter.fontMetrics().height();//文字高度
+        painter.drawText(QRect(0,y-textH/2,plot.left()-1,textH),Qt::AlignRight | Qt::AlignVCenter,QString::number(v,'f',1));    
+    }
 }
 
 void CurveWidget::drawCurves(QPainter &painter, const QRect &plot,
@@ -217,6 +272,41 @@ void CurveWidget::drawCurves(QPainter &painter, const QRect &plot,
     //      y = plot.bottom() - (值 - minValue) / (maxValue - minValue) * plot.height()
     //   （QPolygonF 细节 → 任务卡 §3 小课；也可直接跑
     //     笔记库/QT/示例代码/demo_D5_曲线映射_QPolygonF_已编译通过.cpp 看输出与配图）
+
+    //考虑边界情况:没通道、下标越界、没数据
+    if(m_channels.isEmpty() || m_current < 0 || m_current >= m_channels.size() || m_channels[m_current].values.isEmpty()) return;
+
+    //用虚线、深红色画规格线
+    QPen pen = QPen(QColor(192, 57, 43));//深红色
+    pen.setStyle(Qt::DashLine);//虚线
+    pen.setWidth(1);
+    painter.setPen(pen);
+
+    const double maxY = plot.bottom() - (m_channels[m_current].upperLimit-minValue)/(maxValue-minValue) * plot.height();
+    painter.drawLine(QPointF(plot.left(),maxY),QPointF(plot.right(),maxY));//规格上限
+
+    const double minY = plot.bottom() - (m_channels[m_current].lowerLimit-minValue)/(maxValue-minValue) * plot.height();
+    painter.drawLine(QPointF(plot.left(),minY),QPointF(plot.right(),minY));//规格下限
+    
+    //画折线
+    QPolygonF polygon;
+
+    const Channel &ch = m_channels[m_current];//
+    int n = ch.values.size();
+    for(int i=0;i<n;i++)
+    {
+        const double v = ch.values[i];
+        const double x = plot.left() + (double)i/(m_capacity-1) * plot.width();
+        const double y = plot.bottom() - (v-minValue)/(maxValue-minValue) * plot.height();
+
+        polygon << QPointF(x,y);
+    }
+
+    pen.setColor(QColor(channelColor(m_current)));//改用对应通道的颜色画曲线
+    pen.setWidth(2);
+    painter.setRenderHint(QPainter::Antialiasing,true);//画家启用抗锯齿功能，曲线更平滑
+    painter.setPen(pen);
+    painter.drawPolyline(polygon);
 }
 
 void CurveWidget::drawLegend(QPainter &painter) const
@@ -225,6 +315,31 @@ void CurveWidget::drawLegend(QPainter &painter) const
     //   ① 取当前通道最新值：values 非空 → values.last()；空 → 文字 "（暂无数据）"
     //   ② 用通道颜色的 pen 画文字（drawText 的"点"或"小矩形"重载都行）
     //   ③ 位置建议：绘图区左上角往内收一点，别压在边框线上
+
+    //考虑边界情况：没通道、下标越界
+    if(m_channels.isEmpty() || m_current < 0 || m_current >= m_channels.size()) return;
+
+    //取最新值
+    const QString name = m_channels[m_current].name;    
+    const QString unit = m_channels[m_current].unit;
+
+    //拼文本
+    QString text = name;
+    const Channel &ch = m_channels[m_current];
+    if(ch.values.isEmpty()) text += QStringLiteral(" (暂无数据)");
+    else text += QStringLiteral(" %1 %2").arg(ch.values.last(),0,'f',1).arg(unit);
+
+    //确定文本框的位置
+    const QRect plot = plotArea();
+    const int textW = painter.fontMetrics().horizontalAdvance(text);//文本宽度
+    const int textH = painter.fontMetrics().height();//字体高度
+    QRect box = QRect(plot.left()+8,plot.top()+8,textW+8,textH);
+    
+
+    //画文字
+    painter.fillRect(box,QColor(255,255,255,200));//给文本框填充半透明的白色
+    painter.setPen(QPen(QColor(channelColor(m_current)),1));
+    painter.drawText(box,Qt::AlignLeft | Qt::AlignVCenter ,text);
 }
 
 void CurveWidget::paintEvent(QPaintEvent *event)
@@ -238,7 +353,30 @@ void CurveWidget::paintEvent(QPaintEvent *event)
     //   ⑤ 依次调 drawGridAndAxes → drawCurves → drawLegend（参数照着签名传）
     //   ⚠️ 事件对象没用到 → (void)event;（小习惯：告诉编译器"故意的"）
     //   ⚠️ 千万别在这里再调 update()（P38：自触发 → 死循环）
-    (void)event;
+    Q_UNUSED(event);
+
+    //构造painter对象
+    QPainter painter(this);
+
+    //给CurveWidget填底色
+    painter.fillRect(rect(),Qt::white);
+
+    //获取实时曲线区的矩形
+    const QRect plot = plotArea();
+
+    //获取Y值的最小、最大值
+    double minV = 0.0;
+    double maxV = 0.0;
+    computeRange(minV,maxV);
+
+    //画边框+3条横线+3条竖线、标横线刻度
+    drawGridAndAxes(painter,plot,minV,maxV);
+
+    //画曲线
+    drawCurves(painter,plot,minV,maxV);
+
+    //画签名
+    drawLegend(painter);
 }
 
 } // namespace semieq
