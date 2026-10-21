@@ -51,6 +51,11 @@ bool ModbusTcpClient::isConnected() const
     return m_socket != nullptr && m_socket->state() == QAbstractSocket::ConnectedState;
 }
 
+bool ModbusTcpClient::isConnecting() const
+{
+    return m_socket != nullptr && m_socket->state() == QAbstractSocket::ConnectingState;
+}
+
 void ModbusTcpClient::setConfig(const Config &config)
 {
     m_config = config;
@@ -218,7 +223,7 @@ void ModbusTcpClient::connectToDevice()
     connect(m_socket,&QAbstractSocket::readyRead,this,&onReadyRead,Qt::UniqueConnection);
 
     m_rxBuffer.clear();
-    LOG_INFO("ModbusTcpClient",QStringLiteral("正在连接%1:%2").arg(m_config.host,m_config.port));
+    LOG_INFO("ModbusTcpClient",QStringLiteral("正在连接%1:%2").arg(m_config.host).arg(m_config.port));
     if(!m_connectTimer)
     {
         m_connectTimer = new QTimer(this);
@@ -251,7 +256,7 @@ void ModbusTcpClient::onConnected()
 {
     // TODO(D2-6) 记一条日志 + emit connected()
     if (m_connectTimer) m_connectTimer->stop();
-    LOG_INFO("ModbusTcpClient",QStringLiteral("已连接%1:%2").arg(m_config.host,m_config.port));
+    LOG_INFO("ModbusTcpClient",QStringLiteral("已连接%1:%2").arg(m_config.host).arg(m_config.port));
     emit connected();
 }
 
@@ -297,6 +302,9 @@ void ModbusTcpClient::poll()
     QByteArray request = buildReadHoldingRegistersRequest(m_transactionId,m_config.slaveId,m_config.startAddress,m_config.registerCount);
 
     m_waitingResponse = true;
+    LOG_INFO("ModbusTcpClient", QStringLiteral("发送请求 %1 字节：%2")
+             .arg(request.size())
+             .arg(QString::fromLatin1(request.toHex(' '))));
     m_socket->write(request);
 
 
@@ -318,6 +326,8 @@ void ModbusTcpClient::onReadyRead()
 
     QByteArray temp = m_socket->readAll();
     m_rxBuffer.append(temp);
+    LOG_INFO("ModbusTcpClient", QStringLiteral("收到 %1 字节，缓冲共 %2，期望一帧 %3")
+             .arg(temp.size()).arg(m_rxBuffer.size()).arg(expectedResponseLength(m_config.registerCount)));
 
     int length = expectedResponseLength(m_config.registerCount);
     if(m_rxBuffer.size()<length) return;

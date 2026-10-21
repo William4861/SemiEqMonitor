@@ -46,9 +46,11 @@ public:
 
     QString name() const override;
     bool    isConnected() const override;
+    bool    isConnecting() const override;
 
     void   setConfig(const Config &config);
-    Config config() const { return m_config; }
+    const Config& getConfig() const { return m_config; }
+    const QString getEndpoint() const {return QStringLiteral("%1:%2").arg(m_config.host).arg(m_config.port);}
 
     /// 设置采集点定义（与寄存器顺序一一对应）
     void setParameters(const QVector<Parameter> &params);

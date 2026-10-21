@@ -3,6 +3,7 @@
 #include "common/version.h"     // SEMIEQ_APP_NAME / SEMIEQ_VERSION_STR / SEMIEQ_BUILD_TIME
 #include "ui/curvewidget.h"
 #include "acquisition/modbustcpclient.h"
+#include "acquisition/ideviceclient.h"
 
 #include <QMenuBar>
 #include <QKeySequence>
@@ -130,7 +131,7 @@ void MainWindow::setupMenuBar()
     actQuit->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));
 
     //文件菜单项的连接
-    connect(actConnet,&QAction::triggered,this,&MainWindow::showNotImplemented);
+    connect(actConnet,&QAction::triggered,this,&MainWindow::onConnectDevice);
     connect(actExport,&QAction::triggered,this,&MainWindow::showNotImplemented);
     connect(actQuit,&QAction::triggered,this,&QWidget::close);
     
@@ -237,6 +238,28 @@ void MainWindow::setupAcquisition()
     //        parametersRead   → onParametersRead
     //        connectionError  → onConnectionError
     //   （定时器先别 start —— 连上以后由 onDeviceConnected 启动）
+
+    //创建配置对象
+    ModbusTcpClient::Config cfg;
+    cfg.host = QStringLiteral("127.0.0.1");
+    cfg.port = 1502;
+    cfg.slaveId = 1;
+    cfg.registerCount = 8;
+
+    //创建ModbusTcp客户端对象
+    m_client = new ModbusTcpClient(cfg,this);
+    m_client->setParameters(defaultChannels()); //配置好要采集的8个设备的code、name、unit、lowerLimt、upperLimit
+
+    //创建定时器，连接好轮询槽函数
+    m_pollTimer = new QTimer(this);
+    m_pollTimer->setInterval(500);//500ms
+    connect(m_pollTimer,&QTimer::timeout,m_client,&ModbusTcpClient::poll);
+
+    //给客户端4个信号连接好对应槽函数
+    connect(m_client,&IDeviceClient::connected,this,&MainWindow::onDeviceConnected);
+    connect(m_client,&IDeviceClient::disconnected,this,&MainWindow::onDeviceDisconnected);
+    connect(m_client,&IDeviceClient::parametersRead,this,&MainWindow::onParametersRead);
+    connect(m_client,&IDeviceClient::connectionError,this,&MainWindow::onConnectionError);
 }
 
 void MainWindow::onConnectDevice()
@@ -246,17 +269,35 @@ void MainWindow::onConnectDevice()
     //   ① 状态栏先提示"连接中…"
     //   ② m_client->connectToDevice()
     //   ③ 防抖：已经连着/正在连就直接 return（想清楚怎么判断——isConnected()？）
+
+    //已连接或连接中直接返回
+    if(m_client->isConnected() || m_client->isConnecting()) return;
+
+    //状态栏显示“连接中”
+    m_connStatus->setText(QStringLiteral("连接中..."));
+
+    //连接设备
+    m_client->connectToDevice();
 }
 
 void MainWindow::onDeviceConnected()
 {
     // TODO(D5-10④) ① m_connStatus 显示 "已连接 127.0.0.1:1502"（可以从 config 拼）
     //              ② m_pollTimer->start()   ← 从这一刻起，每 500ms 问一次设备
+
+    //状态栏显示已连接
+    m_connStatus->setText(QStringLiteral("已连接 %1").arg(m_client->getEndpoint()));
+
+    //开始轮询设备
+    m_pollTimer->start();
 }
 
 void MainWindow::onDeviceDisconnected()
 {
     // TODO(D5-10④) ① m_pollTimer->stop() ② m_connStatus 回到 "未连接"
+
+    //状态栏显示“未连接”
+    m_connStatus->setText(QStringLiteral("未连接"));
 }
 
 void MainWindow::onParametersRead(const QVector<semieq::Parameter> &params)
@@ -264,11 +305,17 @@ void MainWindow::onParametersRead(const QVector<semieq::Parameter> &params)
     // TODO(D5-10⑤) 就一行：m_curve->appendSamples(params);
     //   ⚠️ 忍住不要在这里画图 —— 数据驱动绘制：这里只改数据，
     //      曲线内部自己 update() 请求重绘，画由 paintEvent 负责（P38 ④ 刚验收过）
+
+    //给CurveWidget同步数据
+    m_curve->appendSamples(params);
 }
 
 void MainWindow::onConnectionError(const QString &reason)
 {
     // TODO(D5-10④) ① m_pollTimer->stop() ② 状态栏显示 "连接失败：" + reason
+
+    //状态栏显示"连接失败：" + reason
+    m_connStatus->setText(QStringLiteral("连接失败:%1").arg(reason));
 }
 
 } // namespace semieq

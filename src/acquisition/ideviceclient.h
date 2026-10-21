@@ -42,6 +42,9 @@ public:
     /// 当前是否已连接
     virtual bool isConnected() const = 0;
 
+    //当前是否连接中
+    virtual bool isConnecting() const = 0;
+
 public slots:
     /// 发起连接（异步；结果通过 connected / connectionError 通知）
     virtual void connectToDevice() = 0;
