@@ -5,6 +5,47 @@
 
 ---
 
+## 2026-10-21（D5 收尾）· 采集接线打通：8 条曲线第一次动起来
+
+### 今日目标
+- 完成 D5-10 的 6 处接线：`setupAcquisition` ＋ 5 个槽 ＋ 菜单改槽
+- 目标：`run.bat sim` ＋ `run.bat monitor` → 看到实时曲线
+
+### 完成情况
+- ✅ **`setupAcquisition()`**：Config（127.0.0.1:1502 / slaveId 1 / registerCount 8）＋ `new ModbusTcpClient(cfg,this)` ＋ `setParameters(defaultChannels())` ＋ QTimer 500ms ＋ 5 条 connect
+- ✅ **`onConnectDevice()`**：防抖用**新增的 `isConnecting()`**（不是 UI 层存标志）
+- ✅ **`onDeviceConnected()`**：状态栏「已连接 127.0.0.1:1502」＋ `m_pollTimer->start()`
+- ✅ **`onDeviceDisconnected()` / `onParametersRead()` / `onConnectionError()`**
+- ✅ 菜单第 134 行 `showNotImplemented` → `onConnectDevice`
+- ✅ **8 条曲线全部跑通**（温度 / 压力 / 流量 / 转速 / 功率 / 真空度 / 传送带 / 电流），网格、刻度、规格线、图例全部正常
+- ⚠️ 真空度恒 0 → 定位为「整数寄存器无缩放」，**不是程序 bug**（见 BUG-0029）
+
+### 遇到的问题（4 个，全部在"接口与数据表示"上）
+1. `m_client->m_socket->state()` 编译失败：`m_socket` 是 **private**
+2. `const QString& getEndpoint()` 返回 `QStringLiteral(...).arg()` 的临时对象 → **悬垂引用**，GCC `-Wreturn-local-addr` 警告 ×5
+3. `QStringLiteral("正在连接%1:%2").arg(host, port)` → **第二参数被当成字段宽度**，日志出现 `127.0.0.1:%2` ＋ 1502 个空格
+4. 真空度显示 `0.0 kPa`：模拟器 `static_cast<quint16>(double)` **截断小数**，0.6 → 0
+
+### 怎么解决
+- **封装**：`IDeviceClient` 加 `virtual bool isConnecting() const = 0`，实现读 `m_socket->state()` → UI 不碰内部成员
+- **引用**：返回值类型去掉 `&`（按值返回，RVO 零拷贝）
+- **arg**：改链式 `.arg(m_config.host).arg(m_config.port)`
+- **量化**：模拟器 `value * 10.0`、客户端 `parseRes[i] / 10.0`（全局分辨率约定；待改 per-channel scale）
+
+### 学到的
+- **`const&` 只能返回成员 / 静态 / 入参引用**；现场算出来的值必须按值返回
+- **`.arg(a, b)` 不是"插两个值"**：QString 版第二参是**字段宽度**，int 版是**进制**（10/18 讲过，今天又踩）
+- **黑盒链路先加日志**：发送帧（十六进制 + 字节数）＋ 收到字节数 / 期望帧长 → 一次定位断点
+- **单一真相（single source of truth）**：状态存在最了解它的地方（socket state 在客户端），UI 只查询
+- **工程量 = 原始值 × 分辨率**：16 位寄存器传不了小数，工业上靠系数；量程小于 1 的通道（真空度）会被量化吃光
+
+### 明日计划
+- **10/23 14:00 招聘会**：A075 鼎匠 → A085 湖南航天捷诚 → A034 荣泰
+- **D5 review**：`scale` 从全局 ×10 改成 per-channel
+- 之后：QThread 线程化（采集搬出 UI 线程）→ D6
+
+---
+
 ## 2026-10-19（D5 续）· 实时曲线绘图层：5 个绘制函数全部完成
 
 ### 今日目标

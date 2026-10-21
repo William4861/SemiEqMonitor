@@ -31,6 +31,10 @@
 | **BUG-0023** | 2026-10-19 | 高 | 已修复 | 用 **`drawLines`** 画折线 → 点两两配对成断线，应 `drawPolyline` |
 | **BUG-0024** | 2026-10-19 | 高 | 已修复 | **`i / m_capacity` 整数除法** → 所有点 x 相同，曲线缩成竖线 |
 | **BUG-0025** | 2026-10-19 | 中 | 已修复 | `values.last()` 未判空 ＋ `if(v)` 把**值 0** 当成"无数据" → 崩溃 / 恒 0 通道误显示 |
+| **BUG-0026** | 2026-10-21 | 高 | 已修复 | `const QString&` 返回 `QStringLiteral(...).arg(...)` 的临时对象 → **悬垂引用**（`-Wreturn-local-addr` ×5） |
+| **BUG-0027** | 2026-10-21 | 中 | 已修复 | `.arg(host, port)` 第二参数被当**字段宽度** → 日志 `%2` 未替换 ＋ 补 1502 个空格（10/18 同类坑第 2 次） |
+| **BUG-0028** | 2026-10-21 | 中 | 已修复 | UI 直接访问 `m_client->m_socket`（private）编译失败 → 解法：接口加 `isConnecting()` |
+| **BUG-0029** | 2026-10-21 | 高 | 已定位（半修） | 16 位寄存器无缩放：`static_cast<quint16>(double)` 截断 → **真空度 0.6→0**，压力/流量呈阶梯 |
 
 ---
 
@@ -103,6 +107,62 @@
 |---|---|
 | `Channel ch = m_channels[...]` 值拷贝（**同类第 3 次**：`at()` → range-for → 此处） | 一律 `const Channel &ch` |
 | `drawLegend` 未 `setPen`，继承了 `drawCurves` 留下的 2px 通道色笔 → 字变粗 | **每个绘制函数自己设 pen**，`QPainter` 的笔/刷/字体都是**跨函数保留的状态** |
+
+---
+
+## D5 接线踩坑（2026-10-21 · 接口与数据表示）
+
+### BUG-0026 · 返回了临时对象的引用（悬垂引用）
+
+- **现象**：`getEndpoint()` 一写出来，build 就刷 5 条 `warning: returning reference to temporary [-Wreturn-local-addr]`；界面**碰巧**显示正确
+- **根因**：
+  ```cpp
+  const QString& getEndpoint() const { return QStringLiteral("%1:%2").arg(...); }
+  //     ↑ 返回引用                              ↑ 临时 QString
+  ```
+  `QStringLiteral(...).arg(...)` 造出一个**临时对象**，函数返回它的引用 → 函数结束临时销毁 → 调用方拿到**悬垂引用**（UB：可能乱码、可能"看起来正常"、可能崩）
+- **修复**：返回值去掉 `&`（按值返回，C++17 RVO 零拷贝）
+- **教训**：**`const&` 只能返回"别人放在那儿、本来就一直在"的东西**（成员 / 静态 / 入参）；**自己临时造出来的必须按值给**
+
+### BUG-0027 · `.arg(a, b)` 不是"插两个值"（同类坑第 2 次）
+
+- **现象**：日志出现 `正在连接 127.0.0.1:%2` ＋ **一大片空格**（1502 个）
+- **根因**：
+  ```cpp
+  QStringLiteral("正在连接%1:%2").arg(m_config.host, m_config.port)
+  //                                        ↑ quint16 匹配到 arg(QString, int fieldWidth, QChar fill)
+  ```
+  → 第二个参数被当成**字段宽度 1502**（补 1502 个空格），`%2` 没人替换
+- **修复**：`.arg(m_config.host).arg(m_config.port)`（链式，必须分开）
+- **教训**：**对 `int` 来说第 2 参是进制、对 `double` 是格式、对 `QString` 是宽度** —— 想插多个值只能链式
+
+### BUG-0028 · UI 直接摸客户端私有成员
+
+- **现象**：`m_client->m_socket->state() == ConnectingState` 编译失败（`m_socket` 是 private）
+- **诱因**：`connectToDevice()` 需要防抖"已连 / 正在连"，而 `isConnected()` 只覆盖前者
+- **修复**：在 `IDeviceClient` 加 `virtual bool isConnecting() const = 0`，`ModbusTcpClient` 实现为 `m_socket && m_socket->state() == ConnectingState`
+- **为什么比"UI 存 m_connecting 标志"更好**：
+  - **单一真相**：状态只存在 socket 里，UI 只是查询
+  - 不用在三处（connected / disconnected / error）手工复位，**天然不会漏**
+- **教训**：**UI 不该知道通信层的内部结构**；需要什么能力，就让接口提供语义化方法
+
+### BUG-0029 · 16 位寄存器没有缩放 → 小量程通道被量化吃光
+
+- **现象**：8 条曲线里**真空度恒为 0.0 kPa**；压力 / 流量 / 电流的曲线是**阶梯**而不是平滑正弦
+- **根因**：
+  ```cpp
+  appendBigEndian16(response, static_cast<quint16>(qBound(0.0, value, 65535.0)));
+  //                                          ↑ 强转整数 = 截断小数
+  ```
+  | 通道 | 实际 | 发出 | 影响 |
+  |---|---|---|---|
+  | 温度 | 45.6 | 45 | 量程 20–80，看不出来 |
+  | 压力 | 100.3 | 100 | 量程 90–120 → **阶梯** |
+  | 流量 | 6.4 | 6 | 量程 1–12 → **阶梯** |
+  | **真空度** | **0.6** | **0** | 量程 0–1 → **全丢，恒 0** |
+- **修复（当前）**：全局分辨率 ×10 —— 模拟器 `value * 10.0`、客户端 `parseRes[i] / 10.0`
+- **待办**：改成 **per-channel `scale`**（`Parameter` 加字段），否则量程 > 6553.5 的通道会溢出
+- **教训**：**工程量 = 原始值 × 分辨率**。Modbus 寄存器只有 16 位整数，传不了小数；这是工业上位机的**基本功**，不是仿真器写错了
 
 ---
 
