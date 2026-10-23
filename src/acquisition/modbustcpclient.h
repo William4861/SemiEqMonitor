@@ -50,7 +50,7 @@ public:
 
     void   setConfig(const Config &config);
     const Config& getConfig() const { return m_config; }
-    const QString getEndpoint() const {return QStringLiteral("%1:%2").arg(m_config.host).arg(m_config.port);}
+    QString getEndpoint() const {return QStringLiteral("%1:%2").arg(m_config.host).arg(m_config.port);}//const QStrings会阻止移动语义，增加开销,RVO/省略拷贝
 
     /// 设置采集点定义（与寄存器顺序一一对应）
     void setParameters(const QVector<Parameter> &params);

@@ -347,13 +347,11 @@ void ModbusTcpClient::onReadyRead()
             return;
         }
     
-        qDebug()<<parseRes.size();
+       
         for(int i=0;i<parseRes.size() && i<m_parameters.size();i++)
         {
             m_parameters[i].value = parseRes[i];
             m_parameters[i].timestamp = QDateTime::currentDateTime();
-
-            qDebug()<<m_parameters[i].value;
         }
         emit parametersRead(m_parameters);
         m_waitingResponse = false;
