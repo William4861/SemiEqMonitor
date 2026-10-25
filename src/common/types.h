@@ -48,7 +48,11 @@ struct Parameter {
     QString   code;                 ///< 采集点编码，如 "TEMP_CH1"
     QString   name;                 ///< 中文名，如 "腔体温度"
     QString   unit;                 ///< 单位，如 "℃"
-    double    value      = 0.0;     ///< 当前值
+    double    value      = 0.0;     ///< 当前值（工程量，已按 scale 还原）
+    double    scale      = 1.0;     ///< 量化分辨率：工程量 = 原始寄存器值 × scale。
+                                    ///< 例：温度 0.01（寄存器 4530 → 45.30℃）、真空度 0.0001
+                                    ///< ⚠️ 必须与设备侧（模拟器/真机）的量化因子**互为倒数**，
+                                    ///<    改这里就要同步改 `docs/协议说明.md` 与模拟器
     double    lowerLimit = 0.0;     ///< LSL 下限规格线
     double    upperLimit = 0.0;     ///< USL 上限规格线
     QDateTime timestamp;

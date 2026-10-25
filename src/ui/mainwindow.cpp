@@ -40,24 +40,25 @@ QVector<Parameter> defaultChannels()
     channels.reserve(8);
 
     const auto add = [&channels](const QString &code, const QString &name,
-                                 const QString &unit, double lo, double hi) {
+                                 const QString &unit, double scale,double lo, double hi) {
         Parameter p;
         p.code       = code;
         p.name       = name;
         p.unit       = unit;
+        p.scale      = scale;
         p.lowerLimit = lo;
         p.upperLimit = hi;
         channels.append(p);
     };
 
-    add(QStringLiteral("TEMP_CH1"), QStringLiteral("腔体温度"),   QStringLiteral("℃"),    20.0, 80.0);
-    add(QStringLiteral("PRES_CH1"), QStringLiteral("腔体压力"),   QStringLiteral("Pa"),   90.0, 120.0);
-    add(QStringLiteral("FLOW_CH1"), QStringLiteral("冷却水流量"), QStringLiteral("L/min"), 1.0, 12.0);
-    add(QStringLiteral("RPM_CH1"),  QStringLiteral("主轴转速"),   QStringLiteral("rpm"),   0.0, 3000.0);
-    add(QStringLiteral("POWR_CH1"), QStringLiteral("加热功率"),   QStringLiteral("W"),     0.0, 900.0);
-    add(QStringLiteral("VACM_CH1"), QStringLiteral("真空度"),     QStringLiteral("kPa"),   0.0, 1.0);
-    add(QStringLiteral("BELT_CH1"), QStringLiteral("传送带速度"), QStringLiteral("mm/s"),  0.0, 120.0);
-    add(QStringLiteral("CURR_CH1"), QStringLiteral("电源电流"),   QStringLiteral("A"),     0.0, 16.0);
+    add(QStringLiteral("TEMP_CH1"), QStringLiteral("腔体温度"),   QStringLiteral("℃"), 0.01,20.0, 80.0);
+    add(QStringLiteral("PRES_CH1"), QStringLiteral("腔体压力"),   QStringLiteral("Pa"),0.01,90.0, 120.0);
+    add(QStringLiteral("FLOW_CH1"), QStringLiteral("冷却水流量"), QStringLiteral("L/min"),0.001,1.0, 12.0);
+    add(QStringLiteral("RPM_CH1"),  QStringLiteral("主轴转速"),   QStringLiteral("rpm"),1.0,0.0, 3000.0);
+    add(QStringLiteral("POWR_CH1"), QStringLiteral("加热功率"),   QStringLiteral("W"),0.1, 0.0, 900.0);
+    add(QStringLiteral("VACM_CH1"), QStringLiteral("真空度"),     QStringLiteral("kPa"),0.0001,0.0, 1.0);
+    add(QStringLiteral("BELT_CH1"), QStringLiteral("传送带速度"), QStringLiteral("mm/s"),0.01,0.0, 120.0);
+    add(QStringLiteral("CURR_CH1"), QStringLiteral("电源电流"),   QStringLiteral("A"),0.001,0.0, 16.0);
 
     return channels;
 }

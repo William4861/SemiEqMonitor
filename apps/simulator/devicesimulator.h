@@ -75,6 +75,11 @@ public:
     static QVector<double>  registerLowerLimits();
     static QVector<double>  registerUpperLimits();
 
+    /// 每通道量化分辨率：寄存器原值 = 工程量 / scale（四舍五入取整）。
+    /// 上位机侧用同一个值还原：工程量 = 原值 × scale。
+    /// ⚠️ 与 `docs/协议说明.md` §3 的映射表、`src/ui/mainwindow.cpp` 的 defaultChannels() 三处必须一致。
+    static QVector<double>  registerScales();
+
 public slots:
     /// 处理一条控制台命令（h/n/d/l/q）。设为 public 是为了让模拟器 main 能直接连接。
     void onCommand(const QString &command);

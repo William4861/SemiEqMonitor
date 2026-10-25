@@ -21,6 +21,7 @@
 class QComboBox;
 class QLabel;
 class QTimer;
+class QThread;      // D6-2：采集工作线程
 
 namespace semieq {
 
@@ -46,6 +47,15 @@ private slots:
     void onParametersRead(const QVector<semieq::Parameter> &params);  ///< 一批采样 → 喂曲线
     void onConnectionError(const QString &reason);                    ///< 连接失败 → 状态栏提示
 
+signals:
+    // —— D6-2：跨线程「命令」通道 ——
+    //   🔴 为什么需要：m_client 搬进工作线程后，UI 线程**不能直接调用**它的成员函数
+    //      （会报 QSocketNotifier ... from another thread）。必须 emit 信号，
+    //      由 AutoConnection 自动退化为 QueuedConnection，让槽在**工作线程**执行。
+    //   实现提示：onConnectDevice() 里把 m_client->connectToDevice() 换成 emit connectRequested();
+    void connectRequested();        ///< → ModbusTcpClient::connectToDevice（在工作线程执行）
+    void disconnectRequested();     ///< → ModbusTcpClient::disconnectFromDevice（在工作线程执行）
+
 private:
     void setupMenuBar();
     void setupCentralArea();
@@ -60,6 +70,8 @@ private:
     QComboBox       *m_channelSelector = nullptr;   ///< 通道切换下拉框
     ModbusTcpClient *m_client          = nullptr;   ///< Modbus-TCP 客户端
     QTimer          *m_pollTimer       = nullptr;   ///< 采集轮询定时器（500ms → poll()）
+    QThread         *m_acqThread       = nullptr;   ///< D6-2：采集工作线程（m_client 搬进去）
+                                                    ///< ⚠️ 析构里必须先 quit() + wait() 再让它被删
 };
 
 } // namespace semieq

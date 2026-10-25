@@ -105,6 +105,21 @@ QVector<double> DeviceSimulator::registerUpperLimits()
     return {80.0, 120.0, 12.0, 3000.0, 900.0, 1.0, 120.0, 16.0};
 }
 
+QVector<double> DeviceSimulator::registerScales()
+{
+    // 每通道的量化分辨率（工程量 1 个单位 = 多少个寄存器计数）
+    // 设计原则：让【量程上限 / scale】落在 8k–16k counts，既留足 16 位余量、又不浪费分辨率
+    //   温度 80℃   / 0.01    =  8000
+    //   压力 120Pa / 0.01    = 12000
+    //   流量 12    / 0.001   = 12000
+    //   转速 3000  / 1       =  3000
+    //   功率 900W  / 0.1     =  9000
+    //   真空度 1kPa/ 0.0001  = 10000   ← 旧版用全局 ×1 直接截断 → 0.6 变成 0
+    //   皮带 120   / 0.01    = 12000
+    //   电流 16A   / 0.001   = 16000
+    return {0.01, 0.01, 0.001, 1.0, 0.1, 0.0001, 0.01, 0.001};
+}
+
 bool DeviceSimulator::start()
 {
     m_server = new QTcpServer(this);
@@ -265,10 +280,15 @@ void DeviceSimulator::respondReadHoldingRegisters(QTcpSocket *socket,
     response.append(static_cast<char>(kFuncReadHoldingRegs));
     response.append(static_cast<char>(byteCount & 0xFF));
 
+    const QVector<double> scales = registerScales();
     for (quint16 i = 0; i < count; ++i) {
-        // 寄存器按 uint16 传输，先把 double 量化成整数
-        const double value = m_values.at(startAddress + i);
-        appendBigEndian16(response, static_cast<quint16>(qBound(0.0, value, 65535.0)));
+        // 寄存器按 uint16 传输：工程量 → 整数 = round(工程量 / scale)
+        // ⚠️ 别再用 static_cast 直接截断：真空度 0.6 会变成 0，曲线贴地不动（README §8 的"精度不足"就是这个）
+        const int    idx = startAddress + i;
+        const double v   = m_values.at(idx);
+        const double sc  = (idx < scales.size() && scales.at(idx) > 0.0) ? scales.at(idx) : 1.0;
+        const double raw = qBound(0.0, v / sc, 65535.0);
+        appendBigEndian16(response, static_cast<quint16>(qRound(raw)));
     }
 
     socket->write(response);
