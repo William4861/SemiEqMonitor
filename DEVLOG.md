@@ -5,6 +5,48 @@
 
 ---
 
+## 2026-10-25（D6-1）· 每通道量化（scale）：把"真空度恒 0"真正修掉
+
+### 今日目标
+- 把 10/21 留下的「整数寄存器无缩放」从**已知限制**变成**已修复**：改为**每通道独立 scale**
+- 顺带看完正点原子 P56（QThread 多线程），为 D6-2 线程化打底
+
+### 完成情况
+- ✅ **`types.h`**：`Parameter` 新增 `double scale = 1.0`（**工程量 = 原始寄存器值 × scale**）
+- ✅ **模拟器**：新增 `registerScales()`（8 值）；量化从 `static_cast<quint16>(qBound(...))` 改为 **`qRound(工程量 / scale)`**，含 `sc > 0` 兜底
+- ✅ **客户端**：`modbustcpclient.cpp` 解码处 `value = parseRes[i] * m_parameters[i].scale`
+- ✅ **UI**：`defaultChannels()` 的 lambda 加第 6 参数，8 通道 scale 全部填对
+- ✅ **文档**：`docs/协议说明.md` §3 映射表加 **scale 列 ＋ 寄存器满量程列**，新增 §3.1 量化规则与「**三处必须一致**」清单
+- ✅ **验收**：温度显示 **45.xx**（原为整数 45）｜**真空度曲线有起伏**（原为贴地直线）｜`dbtest` **18 passed / 0 failed**
+- ✅ **commit `04aa8c7`**；`BUGS.md` TODO-0003 标「已修」
+- ✅ **学完 P56** ＋ 复述 ＋ 笔记 `笔记库/QT/09_Qt多线程.md` 落盘（第 4 条 `terminate()` 被判错 → 改 `quit()+wait()`）
+
+### 遇到的问题
+1. **README §8 写的「分辨率是全局 ×10」与代码不符** —— 代码里根本没有 ×10，是 `static_cast` **直接截断**
+2. **量化因子该放在哪一层**：放 UI 层（`mainwindow`）会让"协议属性"漂到界面层；放数据模型（`Parameter`）才对
+3. **验收靠眼睛，不靠编译**：编译过、测试过，但"真空度是不是一条直到底的线"只能看曲线 —— **这正好是 `编译过 ≠ 跑得对` 的又一次实例**
+4. （过程记录）AI 侧一度把 `dbtest` 日志里的 `Driver not loaded` 当成回归，实际是 `insertParameterFailsWhenDatabaseClosed()` 的**预期输出**（QWARN + PASS）
+
+### 怎么解决
+- **量化属于协议，不属于 UI**：scale 随 `Parameter` 走，解码在客户端做，UI 只拿到已经是工程量的值
+- **单一因子必然牺牲一端**：8 路量纲差 5 个数量级（真空度 0~1 kPa vs 转速 0~3000 rpm）→ 必须 per-channel
+- **scale 选取原则**：让「量程上限 / scale」落在 **8k–16k counts** —— 既留足 16 位（65535）余量，又不浪费分辨率
+- **截断 vs 四舍五入**：设备侧用 `qRound`，否则 0.6 kPa 会被算成 0（旧版就是这么丢的）
+
+### 学到的
+- **`static_cast<quint16>(double)` 是截断不是四舍五入** —— 小量程通道会被"量化吃光"；工业上靠 `scale`/`offset` 定标解决
+- **量化因子是协议属性**：它必须和设备侧的量化因子**互为倒数**，所以它和寄存器映射表是同一层的东西
+- **三处一致性靠人维护是隐患**：协议文档 / 模拟器 `registerScales()` / `defaultChannels()` 必须同步改（已在 BUGS 记 TODO-0004）
+- **回归测试的真正用途**：这次改的是量化，`dbtest` 18/0 证明**持久层没被牵连** —— 测试不是"跑一遍求心安"，是"划定改动边界"
+
+### 明日计划（D6-2 线程化）
+- `m_client` 搬进工作线程：**`new ModbusTcpClient(cfg)`（不能带 parent）→ `setParameters()` → `moveToThread()` → `start()`**
+- 跨线程只用「信号 → 槽」：`connectRequested/disconnectRequested`（`.h` 已声明）
+- 三个必踩坑：带 parent 的 `moveToThread` **静默失败**／UI 线程直接调 `connectToDevice()` 报 `QSocketNotifier ... from another thread`／析构不 `quit()+wait()` 关窗口 abort
+- 验收：UI 不卡 ＋ 8 曲线照动 ＋ 关窗口不崩；然后 README §8 划掉「采集在 UI 线程」
+
+---
+
 ## 2026-10-21（D5 收尾）· 采集接线打通：8 条曲线第一次动起来
 
 ### 今日目标
