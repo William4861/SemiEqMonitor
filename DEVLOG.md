@@ -5,6 +5,42 @@
 
 ---
 
+## 2026-10-26（D6-2）· 采集线程化：`QTcpSocket` 搬进工作线程
+
+### 今日目标
+- 把 `ModbusTcpClient`（含 `QTcpSocket`）从 **UI 线程**搬进独立工作线程，UI 只发命令
+- 目标：界面不卡、8 曲线照动、**关窗口不崩**
+
+### 完成情况
+- ✅ **建线程与搬家**（`setupAcquisition`）：`new ModbusTcpClient(cfg)`（**去掉了 parent**）→ `setParameters()` → `new QThread(this)` → `moveToThread()` → `start()`
+- ✅ **跨线程命令通道**：`.h` 声明 `connectRequested` / `disconnectRequested` 两个信号；`.cpp` 里三条 connect，**接收者直接是 `m_client` 的槽**
+- ✅ **`onConnectDevice()`**：`m_client->connectToDevice()` → `emit connectRequested()`
+- ✅ **析构**：`if (m_acqThread) { quit(); wait(); }` —— 替换掉原来的 `= default`
+- ✅ **`onDeviceDisconnected()` 补上 `m_pollTimer->stop()`**（D5 遗留的 TODO②，断开后定时器一直空转）
+- ✅ **验收全绿**：`build.bat` **0 error**｜`semieq_tests` **18/0**｜`semieq_db_tests` **18/0**｜GUI 三条 —— 连接成功（状态栏「已连接 127.0.0.1:1502」）/ 控制台无 `QSocketNotifier` 报错 / **关窗口正常退出不 abort**
+
+### 遇到的问题
+1. **一开始想不通"为什么非要自己造两个信号"**：以为信号槽到处都能用
+2. **中途差点写错**：想在 `MainWindow` 里加一个 `onConnectRequested()` 槽，在槽里再调 `m_client->connectToDevice()`
+3. **审查发现 3 个边界**：`isConnected()/getEndpoint()` 仍从 UI 线程只读调用；`disconnectRequested` 目前没有 emit 点（菜单还没有「断开设备」项）；`onDeviceDisconnected` 少了 `stop()`
+
+### 怎么解决
+- **为什么必须自己造信号**：跨线程的调用需要一个「信号」当运输工具。`poll()` 有 `QTimer::timeout` 可搭，**不用加**；而「连接」的第二棒（`onConnectDevice` → 客户端）手上没有信号 —— 第一棒 `QAction::triggered` 已经在菜单接线那一步用掉了
+- **为什么不能写 `MainWindow::onConnectRequested()`**：**槽在哪个对象里，就在那个对象所属的线程执行**。这个槽属于 `MainWindow`（UI 线程），排队终点还是 UI 线程，里面再调 socket 等于没搬 → 接收者必须是 `m_client`
+- **只读查询不加锁**：`isConnected()` / `getEndpoint()` 调用极快且只读，**明确不加锁**（锁的代价大于问题），写进 README §8 已知限制
+
+### 学到的
+- **`moveToThread` 要求对象没有 parent**，否则会打印一行警告然后**静默失败**（程序照跑，只是还在原线程）—— 这种"不崩但没生效"的错误最难查
+- **`terminate()` 不能用**：强杀可能让线程在持锁/写文件时被砍断 → 死锁或数据损坏。正确是 `quit()`（请求退出事件循环）+ `wait()`（阻塞等结束）
+- **`QThread::finished → deleteLater`** 是客户端的正确回收方式：让对象在自己的线程里被删
+- **`QTimer` 留在 UI 线程反而更好**：定时器只管"按节拍发命令"，真正耗时的 I/O 在工作线程，定时精度不受采集阻塞影响
+
+### 明日计划
+- 🔴 **先补数据库接线**（审查时发现）：`main.cpp` 建完库就把 `DatabaseManager` 丢了，`MainWindow` 拿不到它 → **曲线在跑、`parameter_log` 表是空的**。这是现在最大的"能演示但不能深问"的点
+- 然后 **D7 报警引擎**：阈值判定 + 持续时间 + 状态栏/表格提示 + 落 `alarm` 表
+
+---
+
 ## 2026-10-25（D6-1）· 每通道量化（scale）：把"真空度恒 0"真正修掉
 
 ### 今日目标
