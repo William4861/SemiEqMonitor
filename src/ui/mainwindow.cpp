@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QComboBox>
 #include <QTimer>
+#include <QThread>
 // =============================================================================
 //  主窗口实现 —— 分两批完成：
 //    ✅ D6（已完成）：菜单栏 / 中央区域骨架 / 状态栏 / 关于框 / 未实现提示
@@ -81,7 +82,14 @@ MainWindow::MainWindow(QWidget *parent)
     resize(1280, 800);
 }
 
-MainWindow::~MainWindow() = default;
+MainWindow::~MainWindow()
+{
+    if(m_acqThread)
+    {
+        m_acqThread->quit();
+        m_acqThread->wait();
+    }
+}
 
 // =================================================== 待你实现（D6 任务） ===
 
@@ -248,19 +256,30 @@ void MainWindow::setupAcquisition()
     cfg.registerCount = 8;
 
     //创建ModbusTcp客户端对象
-    m_client = new ModbusTcpClient(cfg,this);
+    m_client = new ModbusTcpClient(cfg);
     m_client->setParameters(defaultChannels()); //配置好要采集的8个设备的code、name、unit、lowerLimt、upperLimit
 
-    //创建定时器，连接好轮询槽函数
+    //把m_client移动到采集线程
+    m_acqThread = new QThread(this);
+    m_client->moveToThread(m_acqThread);
+    m_acqThread->start();
+
+    //创建定时器
     m_pollTimer = new QTimer(this);
     m_pollTimer->setInterval(500);//500ms
-    connect(m_pollTimer,&QTimer::timeout,m_client,&ModbusTcpClient::poll);
+    
 
     //给客户端4个信号连接好对应槽函数
     connect(m_client,&IDeviceClient::connected,this,&MainWindow::onDeviceConnected);
     connect(m_client,&IDeviceClient::disconnected,this,&MainWindow::onDeviceDisconnected);
     connect(m_client,&IDeviceClient::parametersRead,this,&MainWindow::onParametersRead);
     connect(m_client,&IDeviceClient::connectionError,this,&MainWindow::onConnectionError);
+    
+    //跨线程信号槽连接
+    connect(m_pollTimer,&QTimer::timeout,m_client,&ModbusTcpClient::poll);//轮询设备
+    connect(this,&MainWindow::connectRequested,m_client,&ModbusTcpClient::connectToDevice);//连接设备
+    connect(this,&MainWindow::disconnectRequested,m_client,&ModbusTcpClient::disconnectFromDevice);//断开设备连接
+    connect(m_acqThread,&QThread::finished,m_client,&QObject::deleteLater);//采集线程销毁则回收m_clinet内存
 }
 
 void MainWindow::onConnectDevice()
@@ -278,7 +297,7 @@ void MainWindow::onConnectDevice()
     m_connStatus->setText(QStringLiteral("连接中..."));
 
     //连接设备
-    m_client->connectToDevice();
+    emit connectRequested();
 }
 
 void MainWindow::onDeviceConnected()
@@ -296,6 +315,9 @@ void MainWindow::onDeviceConnected()
 void MainWindow::onDeviceDisconnected()
 {
     // TODO(D5-10④) ① m_pollTimer->stop() ② m_connStatus 回到 "未连接"
+
+    //计时器停止
+    m_pollTimer->stop();
 
     //状态栏显示“未连接”
     m_connStatus->setText(QStringLiteral("未连接"));
