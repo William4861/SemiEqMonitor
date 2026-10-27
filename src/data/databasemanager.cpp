@@ -340,6 +340,51 @@ bool DatabaseManager::insertAlarm(const Alarm &a)
     return true;
 }
 
+bool DatabaseManager::insertParameters(const QVector<Parameter> &list)
+{
+    //早退
+    if(list.isEmpty()) return true;
+
+    //包事务
+    if(!m_db.transaction())
+    {
+        m_lastError = m_db.lastError().text();
+        LOG_ERROR("DatabaseManager",m_lastError);
+        return false;
+    }
+
+    //Sql语句的准备
+    QSqlQuery query(m_db);
+    query.prepare("INSERT INTO parameter_log(param_code,param_name,unit,value,recorded_at) VALUES(?,?,?,?,?)");
+    for(const Parameter &param : list)
+    {
+        query.addBindValue(param.code);
+        query.addBindValue(param.name);
+        query.addBindValue(param.unit);
+        query.addBindValue(param.value);
+        query.addBindValue(param.timestamp.toString(Qt::ISODate));
+
+        if(!query.exec())
+        {
+            m_lastError = query.lastError().text();
+            LOG_ERROR("DatabaseManager",m_lastError);
+            m_db.rollback();
+            return false;
+        }
+    }
+
+    //事务提交
+    if(!m_db.commit())
+    {
+        m_lastError = m_db.lastError().text();
+        LOG_ERROR("DatabaseManager",m_lastError);
+        m_db.rollback();
+        return false;
+    }
+
+    return true;
+}
+
 QVector<Parameter> DatabaseManager::recentParameters(const QString &paramCode, int limit) const
 {
     // TODO(D4-8) 查最近 N 条某采集点的数据（时间倒序）。

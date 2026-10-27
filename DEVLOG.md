@@ -5,6 +5,49 @@
 
 ---
 
+## 2026-10-27（D6-3）· 采集数据落库：`parameter_log` 第一次有数据
+
+### 今日目标
+- 把 `onParametersRead()` 收到的 8 条采样批量写进 SQLite 的 `parameter_log`
+- 补掉代码审查发现的硬伤：`main.cpp` 里 `DatabaseManager db;` 建完表就没人用了，`MainWindow` 拿不到它
+
+### 完成情况
+- ✅ **`DatabaseManager::insertParameters()`**：**空列表早退** → `transaction()` → **`QSqlQuery` + `prepare` 提到循环外**（解析一次、执行 N 次）→ `for (const Parameter &p : list)` 只 bind + exec → `commit()`；失败路径 `rollback()` 都在 `return` 之前
+- ✅ **`main.cpp`**：`window.setDatabase(&db);`（在 `window.show()` 之前，`db` 仍是 `main()` 的局部对象，`MainWindow` 只借用）
+- ✅ **`onParametersRead()`**：喂完曲线后 `if (m_db != nullptr && m_db->isOpen()) m_db->insertParameters(params);`
+- ✅ **验收（实测查库）**：
+  - **1248 行**，时间范围 `16:58:21 → 16:59:39`（**78 秒**）
+  - **8 个采集点**，`recorded_at` 全部 **ISO 格式**（`2026-10-27T16:59:39`）
+  - 数值合理：真空度 `0.396 kPa`（不是 0 → 证明 D6-1 的 per-channel scale 生效）
+  - 🔎 **数据自洽校验**：`78 s ÷ 0.5 s = 156 轮 × 8 通道 = 1248` —— **一条不差**
+
+### 遇到的问题（第一版写完被逐条打回）
+1. 🔴 **SQL 两个关键字拼错**：`INSET`（应 `INSERT`）、`VALUE`（应 `VALUES`）→ **`prepare()` 直接失败**，而我没检查它的返回值，继续 `exec()` 也失败 → 每次插入都失败
+2. 🔴 **函数末尾没有 `return true;`** → 编译器警告 `control reaches end of non-void function [-Wreturn-type]`，且是未定义行为
+3. 🔴 **`param.timestamp` 直接绑**，没转 ISO 字符串 → 写进去的格式由驱动决定，而读库那边用 `fromString(..., Qt::ISODate)` 解析 → **写读格式不配对**
+4. 🟠 **`QSqlQuery` + `prepare` 写在循环内** → 每轮重新构造、重新解析，正好丢掉了 `prepare` 唯一的价值
+5. 🟠 `for (Parameter param : list)` 按值拷贝（3 个 QString + 1 个 QDateTime）
+
+### 怎么解决
+- 拼写与返回值：改成 `INSERT ... VALUES`；补 `return true;`；`prepare` 的返回值虽然仍没判，但 `exec` 会失败并走 rollback，不会静默成功
+- 时间：写库 `p.timestamp.toString(Qt::ISODate)`，读库 `QDateTime::fromString(str, Qt::ISODate)` —— **两个方向都显式 ISO**
+- 性能：`QSqlQuery query(m_db); query.prepare(...)` 移到循环外，循环里只 `addBindValue` + `exec`
+- 补 `if (list.isEmpty()) return true;`、`const Parameter &`
+
+### 学到的
+- 🔴 **「Build succeeded」什么都不证明**：`INSET` + `VALUE` 两个关键字全错，还少一个 `return`，编译照样过。**只信运行结果**
+- **编译器的 `-Wreturn-type` 是硬警告**：`bool` 函数漏 return 不是"风格问题"，是未定义行为
+- **`QDateTime::toString()` 无参 = `Qt::TextDate`**（`qdatetime.h:113` 的默认参数），实测输出 **`周二 10月 27 16:22:45 2026`** —— 这种格式按字符串排序是乱的，`ORDER BY recorded_at` 直接失效
+- **`fromString` 是 `toString` 的逆操作，两边格式必须配对**：实测 `fromString(toString(), ISODate)` → `isValid() = false`（绑进去成 NULL → 撞 `recorded_at NOT NULL` → INSERT 被拒）
+- **事务的第二个用途是性能**：8 条逐条插 = 每秒 16 次自动提交 = 16 次 fsync；一个事务写 8 条，落盘降到 2 次。验收就靠"拖窗口跟不跟手"
+- **数据能自洽校验**：`行数 ÷ 8 × 0.5 s` 应该 ≈ 实际运行秒数 —— 对不上就说明有丢帧或重复
+
+### 明日计划
+- **D7 报警引擎**：`lowerLimit / upperLimit` 字段早就有 → 阈值判定 + 持续时间 + 状态栏提示 + 落 `alarm` 表（`cleared_at` 用真 NULL 表达"未恢复"）
+- 顺手修 `BUG-0012`（三条集成测试共用同一个 `QTcpServer`，导致 `disconnectEmitsDisconnected` 一直红）
+
+---
+
 ## 2026-10-26（D6-2）· 采集线程化：`QTcpSocket` 搬进工作线程
 
 ### 今日目标

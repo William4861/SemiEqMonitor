@@ -54,6 +54,7 @@ int main(int argc, char *argv[])
     }
 
     semieq::MainWindow window;
+    window.setDatabase(&db);
     window.show();
 
     const int exitCode = app.exec();

@@ -4,6 +4,7 @@
 #include "ui/curvewidget.h"
 #include "acquisition/modbustcpclient.h"
 #include "acquisition/ideviceclient.h"
+#include "data/databasemanager.h"
 
 #include <QMenuBar>
 #include <QKeySequence>
@@ -15,6 +16,7 @@
 #include <QComboBox>
 #include <QTimer>
 #include <QThread>
+#include <QSqlQuery>
 // =============================================================================
 //  主窗口实现 —— 分两批完成：
 //    ✅ D6（已完成）：菜单栏 / 中央区域骨架 / 状态栏 / 关于框 / 未实现提示
@@ -306,7 +308,7 @@ void MainWindow::onDeviceConnected()
     //              ② m_pollTimer->start()   ← 从这一刻起，每 500ms 问一次设备
 
     //状态栏显示已连接
-    m_connStatus->setText(QStringLiteral("已连接 %1").arg(m_client->getEndpoint()));
+    m_connStatus->setText(QStringLiteral("已连接 %1").arg(m_client->endpoint()));
 
     //开始轮询设备
     m_pollTimer->start();
@@ -331,6 +333,12 @@ void MainWindow::onParametersRead(const QVector<semieq::Parameter> &params)
 
     //给CurveWidget同步数据
     m_curve->appendSamples(params);
+
+    //写入数据库
+    if(m_db != nullptr && m_db->isOpen())
+    {
+        m_db->insertParameters(params);
+    }
 }
 
 void MainWindow::onConnectionError(const QString &reason)

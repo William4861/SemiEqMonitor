@@ -27,8 +27,8 @@ public:
     DatabaseManager();
     ~DatabaseManager();
 
-    DatabaseManager(const DatabaseManager &)            = delete;
-    DatabaseManager &operator=(const DatabaseManager &) = delete;
+    DatabaseManager(const DatabaseManager &)            = delete;//禁止拷贝构造
+    DatabaseManager &operator=(const DatabaseManager &) = delete;//禁止拷贝赋值
 
     /// 打开（或创建）数据库文件
     bool open(const QString &dbPath);
@@ -47,6 +47,13 @@ public:
     // -------------------------------------------------------------- 写入 ---
     bool insertParameter(const Parameter &p);
     bool insertAlarm(const Alarm &a);
+
+    /// 批量写入一批采集数据（**一个事务内**完成）。
+    /// 🔴 为什么必须有这个批量接口：`insertParameter()` 单条执行时是 SQLite 的自动提交，
+    ///    8 个采集点 × 每 500 ms 一轮 = **16 次事务/秒**（每次都 fsync）→ 界面会卡。
+    ///    批量接口一个事务写 8 条，落盘次数从 16 降到 2。
+    /// @return 全部成功才 true；任一条失败则回滚并置 lastError。
+    bool insertParameters(const QVector<Parameter> &list);
 
     // -------------------------------------------------------------- 查询 ---
     /// 最近 N 条某采集点的记录（时间倒序）

@@ -27,6 +27,7 @@ namespace semieq {
 
 class CurveWidget;
 class ModbusTcpClient;
+class DatabaseManager;
 
 class MainWindow : public QMainWindow
 {
@@ -35,6 +36,9 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
+
+    /// D6-3：注入持久层（由 main() 建好并打开后传进来；本类**不拥有**它，不负责 close/delete）
+    void setDatabase(DatabaseManager *db) { m_db = db; }
 
 private slots:
     void showAbout();
@@ -72,6 +76,7 @@ private:
     QTimer          *m_pollTimer       = nullptr;   ///< 采集轮询定时器（500ms → poll()）
     QThread         *m_acqThread       = nullptr;   ///< D6-2：采集工作线程（m_client 搬进去）
                                                     ///< ⚠️ 析构里必须先 quit() + wait() 再让它被删
+    DatabaseManager *m_db              = nullptr;   ///< D6-3：持久层（外部注入，本类不拥有）
 };
 
 } // namespace semieq

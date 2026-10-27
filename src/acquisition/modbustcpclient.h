@@ -49,8 +49,10 @@ public:
     bool    isConnecting() const override;
 
     void   setConfig(const Config &config);
-    const Config& getConfig() const { return m_config; }
-    QString getEndpoint() const {return QStringLiteral("%1:%2").arg(m_config.host).arg(m_config.port);}//const QStrings会阻止移动语义，增加开销,RVO/省略拷贝
+    const Config& config() const { return m_config; }
+    /// 当前连接端点，形如 "127.0.0.1:1502"。
+    /// ⚠️ 按值返回（RVO 零拷贝）——它现场算出来的，返回 const& 会悬垂（BUG-0026）
+    QString endpoint() const {return QStringLiteral("%1:%2").arg(m_config.host).arg(m_config.port);}
 
     /// 设置采集点定义（与寄存器顺序一一对应）
     void setParameters(const QVector<Parameter> &params);
