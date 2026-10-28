@@ -5,6 +5,59 @@
 
 ---
 
+## 2026-10-28（D7 前半）· 报警引擎：前置修复 + `clearAlarm()`（**只完成 2/5，未验收**）
+
+### 今日目标
+- 开 D7 报警引擎：把"阈值判定 + 防抖 + 落 `alarm` 表"做出来
+- 预计 3–4 h 完成，任务卡 `docs/tasks/D7_报警引擎.md`
+
+### 完成情况（🔴 **只做了 2 块，今天没收尾**）
+
+| # | 项 | 状态 |
+|---|---|---|
+| **D7-0** | `insertAlarm()` 时间字段改 `toString(Qt::ISODate)` | ✅ 完成 |
+| **D7-b** | `clearAlarm(paramCode, clearedAt)` 实现（UPDATE + 事务 + 错误处理） | 🟡 **已写，还差一行**（`return true` → `numRowsAffected() > 0`）；`isNull()` → `isEmpty()` 已改 |
+| **D7-0.5** | `schemaStatements()` 加部分唯一索引 `idx_alarm_one_active` | ⏳ 未做 |
+| **D7-d** | `setupStatusBar()` 加 `m_alarmStatus` 标签 | ⏳ 未做 |
+| **D7-e** | `checkAlarms()` 四态状态机 | ⏳ 未做 |
+| **D7-f** | `onParametersRead()` 末尾调一行 | ⏳ 未做 |
+
+**编译状态**：`.h` 骨架（`clearAlarm` 声明 / `checkAlarms` / `m_alarmStatus` / 三个 `QHash`）已加，`build 0 warning`、`dbtest 18/0`、`tests 18/0`。
+
+### 遇到的问题（三个都是"实测才发现的"）
+
+**① `QString::isNull()` 判不住空串**
+`clearAlarm` 里写 `if (paramCode.isNull())` —— 本机实测：
+```
+QString a;                  → isNull=true   isEmpty=true
+QString b = "";             → isNull=false  isEmpty=true   ← 空字面量不是 null
+QStringLiteral("")          → isNull=false  isEmpty=true
+d = "x"; d.clear();         → isNull=true   isEmpty=true
+```
+→ 判空必须用 `isEmpty()`。
+
+**② `UPDATE ... WHERE` 会改**所有**匹配行，不是 1 行**
+实测（SQLite 3.31.1，项目实际驱动）：插 3 条同 `param_code` 且 `cleared_at IS NULL` → 跑那条 UPDATE → **影响 3 行**。
+想用 `UPDATE ... ORDER BY id LIMIT 1` 限一条 → ❌ **`near "ORDER": syntax error`**（该构建没开 `SQLITE_ENABLE_UPDATE_DELETE_LIMIT`，**UPDATE 不支持 LIMIT**）。
+→ 解法：**部分唯一索引**（实测可建、可拦住第 2 条未恢复插入、已恢复的不受影响）。
+
+**③ `checkAlarms` 放进 `private slots:` 会链接失败**
+moc 会为槽生成 `qt_static_metacall` 里的调用，**没实现就是 `undefined reference to ...checkAlarms`**，`build.bat` 直接 `ld returned 1 exit status`。
+→ 改成普通 `private:` 成员函数（它只被 `onParametersRead` 内部调用，不需要信号连接）。
+
+### 学到的
+- **`numRowsAffected()` 是 UPDATE/DELETE 的"真改到了吗"判据，但 `SELECT` 返回 0**（不是行数）；`size()` 在 SQLite 上返回 -1 → 数行数只能自己 `while(next()) ++n`
+- **`alarm` 表是审计记录，只增不删**：产生（`raised_at`）→ 确认（`acknowledged`/`ack_by`）→ 恢复（`cleared_at`）。"断线"不等于"故障解除"，不能因为断线就把报警标成已恢复
+- **`clearAlarm` 只改一行不是技术限制，是数据约束的体现**："一个采集点同时有多条未恢复报警"本身就是 bug，应该让它在 `INSERT` 时被唯一索引拒掉，而不是在 `clear` 时被悄悄改掉
+- **`alarm` 表缺 `ack_at`**（只有 `acknowledged` + `ack_by`）→ 算不出响应时长 → 记 `BUGS.md` **TODO-0009**，推迟到 D9
+
+### 明日计划
+1. **补完 D7 剩余 3 块**（唯一索引 → `m_alarmStatus` → `checkAlarms` 状态机），按卡里 §7 那 7 条验收
+2. **11/01 毕设必须开工**（只剩 3 天）
+3. 10/29 埃芯追问邮件（10/26 投，第 3 个工作日）
+
+---
+
 ## 2026-10-27（D6-3）· 采集数据落库：`parameter_log` 第一次有数据
 
 ### 今日目标

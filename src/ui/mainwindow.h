@@ -17,6 +17,7 @@
 #include "common/types.h"    // semieq::Parameter（onParametersRead 槽签名要用）
 
 #include <QMainWindow>
+#include <QHash>
 
 class QComboBox;
 class QLabel;
@@ -66,8 +67,19 @@ private:
     void setupStatusBar();
     void setupAcquisition();       ///< D5：建客户端 + 轮询定时器 + 连信号（待实现）
 
+    /// D7：阈值判定 + 四态状态机（防抖）
+    /// ⚠️ 这是**普通私有成员函数**，不是槽 —— 它只被 onParametersRead() 内部调用，
+    ///    不需要信号连接。放进 private slots 会让 moc 生成调用代码，未实现就链接失败。
+    void checkAlarms(const QVector<semieq::Parameter> &params);
+
     QLabel *m_connStatus   = nullptr;
     QLabel *m_versionLabel = nullptr;
+    QLabel *m_alarmStatus  = nullptr;   ///< D7：状态栏右侧「当前报警」提示
+
+    // ---- D7 报警引擎状态（每个采集点各自一套计数，键＝param_code）----
+    QHash<QString, int>  m_overCount;     ///< 连续超限次数（≥3 才确认报警，防抖）
+    QHash<QString, int>  m_normalCount;   ///< 连续回到正常区间的次数（≥3 才确认恢复）
+    QHash<QString, bool> m_alarming;      ///< 该采集点当前是否处于「报警中」
 
     // —— D5：实时曲线 + 采集接线 ——
     CurveWidget     *m_curve           = nullptr;   ///< 中央实时曲线（自绘）

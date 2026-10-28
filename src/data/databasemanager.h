@@ -48,6 +48,11 @@ public:
     bool insertParameter(const Parameter &p);
     bool insertAlarm(const Alarm &a);
 
+    /// D7：恢复一条报警 —— 把该采集点「尚未恢复」的那条记录的 cleared_at 写上。
+    /// 用 param_code 定位（同一采集点同一时刻只应有一条未恢复报警），**因此不需要先拿自增 id**。
+    /// @return 有行被更新才 true；本来就不在报警中（0 行匹配）返回 false。
+    bool clearAlarm(const QString &paramCode, const QDateTime &clearedAt);
+
     /// 批量写入一批采集数据（**一个事务内**完成）。
     /// 🔴 为什么必须有这个批量接口：`insertParameter()` 单条执行时是 SQLite 的自动提交，
     ///    8 个采集点 × 每 500 ms 一轮 = **16 次事务/秒**（每次都 fsync）→ 界面会卡。

@@ -324,8 +324,9 @@ bool DatabaseManager::insertAlarm(const Alarm &a)
     query.addBindValue(static_cast<int>(a.level));//level是枚举类型，转成int类型再存
     query.addBindValue(a.message);
     query.addBindValue(a.triggerValue);
-    query.addBindValue(a.raisedAt);
-    if(a.clearedAt.isNull()) query.addBindValue(QVariant(QVariant::String));else query.addBindValue(a.clearedAt);//clearedAt可能为空字符串，不能存空字符串，若为空字符串就存空QVariant
+    query.addBindValue(a.raisedAt.toString(Qt::ISODate));
+    if(a.clearedAt.isNull()) query.addBindValue(QVariant(QVariant::String));
+    else query.addBindValue(a.clearedAt.toString(Qt::ISODate));//clearedAt可能为空字符串，不能存空字符串，若为空字符串就存空QVariant
     query.addBindValue(a.acknowledged);
     query.addBindValue(a.ackBy);
 
@@ -334,6 +335,46 @@ bool DatabaseManager::insertAlarm(const Alarm &a)
     {
         m_lastError = query.lastError().text();
         LOG_ERROR("DatabaseManager",m_lastError);
+        return false;
+    }
+
+    return true;
+}
+
+bool DatabaseManager::clearAlarm(const QString &paramCode, const QDateTime &clearedAt)
+{
+    //早退
+    if(paramCode.isEmpty() || clearedAt.isNull()) return false;
+
+    //预编译Sql语句
+    QSqlQuery query(m_db);
+    query.prepare("UPDATE alarm SET cleared_at = ? WHERE param_code = ? AND cleared_at IS NULL");
+    query.addBindValue(clearedAt.toString(Qt::ISODate));
+    query.addBindValue(paramCode);
+
+    //包事务
+    if(!m_db.transaction())
+    {
+        m_lastError = m_db.lastError().text();
+        LOG_ERROR("DatabaseManager",m_lastError);
+        return false;
+    }
+
+    //执行Sql语句
+    if(!query.exec())
+    {
+        m_lastError = query.lastError().text();
+        LOG_ERROR("DatabaseManager",m_lastError);
+        m_db.rollback();
+        return false;
+    }
+
+    //提交事务
+    if(!m_db.commit())
+    {
+        m_lastError = m_db.lastError().text();
+        LOG_ERROR("DatabaseManager",m_lastError);
+        m_db.rollback();
         return false;
     }
 
@@ -382,7 +423,7 @@ bool DatabaseManager::insertParameters(const QVector<Parameter> &list)
         return false;
     }
 
-    return true;
+    return query.numRowsAffected() > 0;
 }
 
 QVector<Parameter> DatabaseManager::recentParameters(const QString &paramCode, int limit) const
